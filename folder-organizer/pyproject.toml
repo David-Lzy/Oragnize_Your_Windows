@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "download-curator"
+version = "0.1.0"
+description = "Safety-first Windows download folder organizer and local search index"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "pypdf>=5,<7",
+]
+
+[project.scripts]
+download-curator = "download_curator.core:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

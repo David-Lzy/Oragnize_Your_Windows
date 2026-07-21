@@ -1,0 +1,18 @@
+{
+  "decisions": [
+    {
+      "id": "document-id-from-review-payload",
+      "category": "Work/Contracts_Legal",
+      "confidence": 0.95,
+      "reason": "The bounded preview consistently describes an agreement.",
+      "decision_source": "llm_decision"
+    },
+    {
+      "id": "uncertain-document-id",
+      "category": "人工审核/文档",
+      "confidence": 1.0,
+      "reason": "Evidence is insufficient; route to manual review.",
+      "decision_source": "manual_review_queue"
+    }
+  ]
+}

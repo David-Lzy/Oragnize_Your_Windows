@@ -1,0 +1,93 @@
+root = "H:\\Download"
+archive_dir = "Archive"
+organized_dir = "分类整理"
+settle_hours = 48
+quick_hash_bytes = 1048576
+dedupe_move_scope = "root_files"
+exe_dirs = ["Software/Installers_Apps"]
+
+[index_settings]
+database = ".state/download-index.sqlite3"
+exclude_directories = ["$RECYCLE.BIN", "System Volume Information"]
+
+[category_rules]
+"Software/Installers_Apps" = [".exe", ".msi", ".msix", ".appx", ".appxbundle"]
+"Software/Installers_Android" = [".apk", ".xapk", ".apks"]
+"Software/Installers_Linux" = [".deb", ".rpm", ".appimage", ".snap"]
+"Archives/Compressed" = [".zip", ".7z", ".rar", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".zst"]
+"System/ISO_BootMedia" = [".iso", ".esd", ".wim"]
+"System/Disk_Images_ROMs" = [".ova", ".ovf", ".vhd", ".vhdx", ".vmdk", ".qcow2", ".img"]
+"System/Firmware_ROMs" = [".rom", ".trx", ".ubi", ".squashfs", ".itb"]
+"Media/Audio" = [".mp3", ".flac", ".wav", ".m4a", ".aac", ".ogg", ".opus"]
+"Media/Images" = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".bmp", ".tif", ".tiff", ".svg"]
+"Documents/General" = [".pdf", ".doc", ".docx", ".ppt", ".pptx", ".txt", ".rtf", ".epub", ".xls", ".xlsx", ".xlsm", ".csv", ".ods"]
+"Downloads/Torrent_Metadata" = [".torrent"]
+"Projects/Temp_Code_Notebooks" = [".ipynb"]
+"DevOps/Config_Scripts" = [".ps1", ".bat", ".cmd", ".sh", ".py", ".js", ".ts", ".json", ".yaml", ".yml", ".toml", ".ini", ".reg"]
+"Web/Site_Backups" = [".html", ".htm", ".mhtml", ".warc"]
+
+[document_settings]
+source_dir = "Documents/General"
+preview_chars = 400
+max_extract_mb = 100
+pdf_pages = 3
+min_score = 4
+min_margin = 2
+llm_min_confidence = 0.90
+allowed_categories = [
+  "人工审核/文档",
+  "Documents/Templates",
+  "Study/Papers_Courses",
+  "Study/References",
+  "Work/Docs_Reports",
+  "Work/Business_Materials",
+  "Work/Contracts_Legal",
+  "Work/Finance_Invoices",
+  "Personal/Career",
+  "Personal/Mail_Exports",
+  "Personal/Web_Exports",
+  "Projects/Code_Data",
+  "Sensitive/Keys",
+  "Sensitive/Identity_Finance"
+]
+
+[document_categories."Sensitive/Keys"]
+local_only = false
+keywords = ["private key", "ssh key", "api key", "secret key", "password", "credential", "seed phrase", "密钥", "密码", "凭据", "助记词"]
+
+[document_categories."Sensitive/Identity_Finance"]
+local_only = false
+keywords = ["passport", "driver licence", "driver license", "identity card", "bank statement", "tax file number", "payslip", "social security", "护照", "身份证", "银行账单", "税号", "工资单"]
+
+[document_categories."Work/Finance_Invoices"]
+keywords = ["invoice", "receipt", "purchase order", "quotation", "expense", "tax invoice", "发票", "收据", "报价", "采购订单", "报销"]
+
+[document_categories."Work/Contracts_Legal"]
+keywords = ["contract", "agreement", "non-disclosure", "nda", "deed", "legal", "terms and conditions", "offer letter", "employment", "合同", "协议", "法律", "保密", "录用"]
+
+[document_categories."Personal/Career"]
+keywords = ["resume", "curriculum vitae", "cover letter", "job application", "graduate engineer", "cv", "简历", "求职", "申请信"]
+
+[document_categories."Study/Papers_Courses"]
+keywords = ["assignment", "lecture", "tutorial", "course", "exam", "question paper", "thesis", "dissertation", "syllabus", "homework", "作业", "课程", "讲义", "试题", "考试", "论文"]
+
+[document_categories."Study/References"]
+keywords = ["manual", "handbook", "datasheet", "reference", "specification", "standard", "user guide", "white paper", "rfc", "说明书", "手册", "指南", "规范", "标准", "参考资料"]
+
+[document_categories."Documents/Templates"]
+keywords = ["template", "blank form", "sample form", "checklist", "模板", "空白表", "清单"]
+
+[document_categories."Work/Docs_Reports"]
+keywords = ["report", "proposal", "meeting minutes", "project plan", "assessment", "review", "architecture", "technical", "报告", "方案", "会议纪要", "项目计划", "评审", "架构", "技术"]
+
+[document_categories."Work/Business_Materials"]
+keywords = ["business", "commercial", "marketing", "brochure", "company profile", "product presentation", "商务", "业务", "市场", "宣传册", "公司介绍", "产品介绍"]
+
+[document_categories."Projects/Code_Data"]
+keywords = ["dataset", "data dictionary", "schema", "database", "api documentation", "benchmark results", "数据集", "数据字典", "数据库", "接口文档", "基准测试"]
+
+[document_categories."Personal/Mail_Exports"]
+keywords = ["mail export", "email export", "mailbox", "邮件导出", "邮箱备份"]
+
+[document_categories."Personal/Web_Exports"]
+keywords = ["web archive", "saved webpage", "browser export", "网页存档", "网页导出", "浏览器导出"]
