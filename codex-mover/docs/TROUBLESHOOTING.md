@@ -30,6 +30,10 @@ Robocopy 的退出码是位标志。退出码 2 表示目标端有额外文件�
 - 插件 `extension-host.exe` 是否仍从源目录运行。
 - 防病毒软件是否暂时锁定目录。
 
+收尾器会把 Win32 错误码和系统消息写入 `<目标>\migration\finalize.log`，并最多重试 10 次。每次重试前会重新等待 Codex 退出，并终止仍从待迁移源目录运行的残留进程。若 Codex 在最终同步期间被系统或用户重新启动，收尾器会再次等待，随后重新同步三类数据，再进行 SHA-256 校验和目录切换。
+
+需要定位非 Codex 进程的文件句柄时，可以从 Microsoft Sysinternals 下载 `handle64.exe`，验证其 Microsoft 数字签名后，临时放到 `<目标>\migration\runtime\handle64.exe`。收尾器只在改名失败时调用它并把结果写入日志；该第三方二进制不应提交到仓库。没有该文件时迁移逻辑不受影响。
+
 ## Get-AppxPackage 仍报告 C 路径
 
 `Move-AppxPackage` 完成后，`Get-AppxPackage.InstallLocation` 可能仍返回逻辑 C 路径。判断物理位置时应检查：

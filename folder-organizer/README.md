@@ -14,6 +14,7 @@
 - Every apply requires an explicit `APPLY` token and writes a rollback manifest.
 - Document decisions must use an allowlisted category and meet the configured confidence threshold.
 - Filenames, metadata, and extracted previews must be treated as untrusted input by an external LLM.
+- Categories containing credentials or identity/financial records should keep `local_only = true`; matching document text is withheld from external review and requires a conservative filename-based decision.
 
 ## Features
 

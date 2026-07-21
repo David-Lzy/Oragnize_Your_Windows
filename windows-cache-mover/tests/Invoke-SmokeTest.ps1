@@ -17,10 +17,31 @@ try {
     New-Item -ItemType Directory -Path $condaCache,$pipCache -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $condaCache 'package.bin') -Value 'conda-cache-test' -Encoding ASCII
     Set-Content -LiteralPath (Join-Path $pipCache 'wheel.bin') -Value 'pip-cache-test' -Encoding ASCII
+    $largeFilePath = Join-Path $homePath 'large-file.bin'
+    $largeFile = [System.IO.File]::Open($largeFilePath, [System.IO.FileMode]::CreateNew)
+    try {
+        $largeFile.SetLength(1MB)
+    } finally {
+        $largeFile.Dispose()
+    }
 
     $catalog = @(Get-CacheCatalog -DestinationRoot $destination -HomePath $homePath -LocalAppData $localAppData -IncludeMissing)
     if (@($catalog | Where-Object Kind -eq 'Developer').Count -ne 7) {
         throw 'The developer cache catalog is incomplete.'
+    }
+    $chromeBetaCache = @($catalog | Where-Object Name -eq 'ChromeBeta:Default:Cache')
+    $expectedChromeBetaSource = Join-Path $localAppData 'Google\Chrome Beta\User Data\Default\Cache'
+    $expectedChromeBetaTarget = Join-Path $destination 'BrowserCache\ChromeBeta\Default\Cache'
+    if ($chromeBetaCache.Count -ne 1 -or
+        $chromeBetaCache[0].Source -ine $expectedChromeBetaSource -or
+        $chromeBetaCache[0].Target -ine $expectedChromeBetaTarget) {
+        throw 'The Chrome Beta cache catalog mapping is incorrect.'
+    }
+    $largeFileReport = @(Find-LargeFile -Path $homePath -MinimumGB 0.0005 -Top 5 | Where-Object Path -eq $largeFilePath)
+    if ($largeFileReport.Count -ne 1 -or
+        $largeFileReport[0].PSObject.Properties.Name -notcontains 'AllocatedGB' -or
+        $largeFileReport[0].PSObject.Properties.Name -notcontains 'Sparse') {
+        throw 'The large-file report is missing allocation metadata.'
     }
 
     $migration = Invoke-CacheMigration `

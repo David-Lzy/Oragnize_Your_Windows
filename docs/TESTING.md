@@ -15,9 +15,12 @@
 
 ```powershell
 Push-Location .\folder-organizer
+python -m pip install -e .
 python -m unittest discover -s tests -v
 Pop-Location
 ```
+
+该项目使用 `src` 布局；全新 checkout 若未先做 editable install，直接运行 `unittest` 会因找不到 `download_curator` 而失败。
 
 当前测试覆盖计划/应用/撤销、过期计划拒绝、哈希缓存、重复文件、文档隐私计划以及增量 FTS 索引。
 

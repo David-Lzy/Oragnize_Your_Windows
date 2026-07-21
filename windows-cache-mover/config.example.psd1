@@ -3,7 +3,7 @@
     # F:\BrowserCache\... and F:\DevCache\...
     DestinationRoot = 'F:\'
 
-    Browsers = @('Chrome', 'Brave', 'Edge')
+    Browsers = @('Chrome', 'ChromeBeta', 'Brave', 'Edge')
     IncludeDeveloper = $true
 
     # $false copies existing cache content before replacing the source with a

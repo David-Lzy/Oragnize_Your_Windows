@@ -226,6 +226,60 @@ function Stop-LingeringSourceProcesses {
     }
 }
 
+function Write-OpenHandleDiagnostics {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $handleExecutable = Join-Path $runtimeDirectory 'handle64.exe'
+    if (-not (Test-Path -LiteralPath $handleExecutable)) {
+        return
+    }
+
+    try {
+        $handleOutput = & $handleExecutable -accepteula -nobanner -a $Path 2>&1
+        if ($LASTEXITCODE -eq 0 -and $handleOutput) {
+            Write-FinalizeLog ("Open-handle diagnostics for {0}:" -f $Path)
+            foreach ($line in @($handleOutput)) {
+                Write-FinalizeLog ("  HANDLE {0}" -f $line)
+            }
+        }
+    }
+    catch {
+        Write-FinalizeLog ("Open-handle diagnostics failed for {0}: {1}" -f $Path, $_.Exception.Message)
+    }
+}
+
+function Move-DirectoryWithRetry {
+    param(
+        [Parameter(Mandatory)][string]$Source,
+        [Parameter(Mandatory)][string]$Destination,
+        [ValidateRange(1, 30)][int]$Attempts = 10
+    )
+
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            [CodexMoverNative]::MoveDirectory($Source, $Destination)
+            return
+        }
+        catch {
+            $detail = $_.Exception.Message
+            if ($_.Exception.InnerException) {
+                $detail = '{0}; inner={1}' -f $detail, $_.Exception.InnerException.Message
+            }
+            Write-FinalizeLog ("Directory rename attempt {0}/{1} failed: {2}" -f $attempt, $Attempts, $detail)
+            Write-OpenHandleDiagnostics -Path $Source
+            if ($attempt -eq $Attempts) {
+                throw
+            }
+            Wait-CodexDesktopExit -TimeoutSeconds 120 -OnProgress {
+                param($Ids)
+                Write-FinalizeLog ("Rename retry is waiting for Codex processes: {0}" -f $Ids)
+            }
+            Stop-LingeringSourceProcesses
+            Start-Sleep -Seconds 2
+        }
+    }
+}
+
 function Switch-DirectoryToJunction {
     param(
         [Parameter(Mandatory)][string]$Source,
@@ -252,7 +306,7 @@ function Switch-DirectoryToJunction {
     }
 
     Write-FinalizeLog ("Switching to junction: {0}" -f $Label)
-    [CodexMoverNative]::MoveDirectory($Source, $backup)
+    Move-DirectoryWithRetry -Source $Source -Destination $backup
     $record = [pscustomobject]@{ Source = $Source; Target = $Target; Backup = $backup; Label = $Label }
     $script:switches += $record
     New-Item -ItemType Junction -Path $Source -Target $Target -Force | Out-Null
@@ -354,6 +408,26 @@ try {
     if (Test-Path -LiteralPath ([string]$state.source.local_codex)) {
         Write-FinalizeLog 'Final synchronization started: Local OpenAI Codex data.'
         Invoke-CodexRobocopy -Source ([string]$state.source.local_codex) -Destination ([string]$state.target.local_codex) -Mode Mirror -LogPath $logPath -Verify | Out-Null
+    }
+
+    $reappearedProcesses = @(Get-CodexCoreProcesses)
+    if ($reappearedProcesses.Count -gt 0) {
+        Write-FinalizeLog ("Codex processes reappeared during synchronization: {0}. Waiting again." -f (($reappearedProcesses.ProcessId | Sort-Object) -join ', '))
+        Wait-CodexDesktopExit -TimeoutSeconds $WaitTimeoutSeconds -OnProgress {
+            param($Ids)
+            Write-FinalizeLog ("Still waiting before the final resynchronization: {0}" -f $Ids)
+        }
+        Stop-LingeringSourceProcesses
+        Start-Sleep -Seconds 2
+
+        Write-FinalizeLog 'Final resynchronization started after Codex exited again: CODEX_HOME.'
+        Invoke-CodexRobocopy -Source ([string]$state.source.home) -Destination ([string]$state.target.home) -Mode Union -LogPath $logPath -Verify | Out-Null
+        if (Test-Path -LiteralPath ([string]$state.source.runtime)) {
+            Invoke-CodexRobocopy -Source ([string]$state.source.runtime) -Destination ([string]$state.target.runtime) -Mode Mirror -LogPath $logPath -Verify | Out-Null
+        }
+        if (Test-Path -LiteralPath ([string]$state.source.local_codex)) {
+            Invoke-CodexRobocopy -Source ([string]$state.source.local_codex) -Destination ([string]$state.target.local_codex) -Mode Mirror -LogPath $logPath -Verify | Out-Null
+        }
     }
 
     if ($state.current_session_relative_path) {

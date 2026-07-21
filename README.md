@@ -9,7 +9,7 @@
 | 子项目 | 适用场景 | 默认行为 | 写操作与恢复 |
 | --- | --- | --- | --- |
 | [Folder Organizer](./folder-organizer/) | 下载目录杂乱、重复文件、旧安装包、文档分类和本地检索 | 生成只读计划 | `apply --confirm APPLY` 才移动文件；写入 rollback 清单，可 `undo` |
-| [Windows Cache Mover](./windows-cache-mover/) | 浏览器与开发工具缓存持续占用 C 盘 | 审计或预览 | `-Apply` 后复制/建立 Junction；JSON 清单支持验证与恢复 |
+| [Windows Cache Mover](./windows-cache-mover/) | Chrome（含 Beta）、Brave、Edge 与开发工具缓存持续占用 C 盘 | 审计或预览 | `-Apply` 后复制/建立 Junction；JSON 清单支持验证与恢复 |
 | [Codex Mover](./codex-mover/) | Windows Codex 的 `.codex`、运行时缓存、本地数据和 MSIX 占用 C 盘 | 只读盘点与预复制 | UAC 收尾器等待 Codex 退出后切换；保留 C 盘备份，验收后再清理 |
 
 ### 应该选择哪个？
@@ -108,6 +108,7 @@ Oragnize_Your_Windows/
 ```powershell
 # Folder Organizer
 Push-Location .\folder-organizer
+python -m pip install -e .
 python -m unittest discover -s tests -v
 Pop-Location
 

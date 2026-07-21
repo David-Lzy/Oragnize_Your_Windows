@@ -70,7 +70,11 @@ public static class CodexMoverNative
         if (!MoveFileExW(source, destination, 8))
         {
             int error = Marshal.GetLastWin32Error();
-            throw new Win32Exception(error, "Atomic directory rename failed: " + source + " -> " + destination);
+            string systemMessage = new Win32Exception(error).Message;
+            throw new Win32Exception(
+                error,
+                "Atomic directory rename failed: " + source + " -> " + destination +
+                " (Win32 error " + error + ": " + systemMessage + ")");
         }
     }
 
