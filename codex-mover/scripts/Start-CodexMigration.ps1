@@ -177,6 +177,10 @@ if ($StageOnly) {
 
 $finalizerPath = Join-Path $migrationDirectory 'Finalize-CodexMigration.ps1'
 $argumentLine = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -StatePath "{1}"' -f $finalizerPath, $statePath
-$process = Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argumentLine -PassThru
+$powerShellHost = Get-Command 'pwsh.exe' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1
+if (-not $powerShellHost) {
+    $powerShellHost = 'powershell.exe'
+}
+$process = Start-Process -FilePath $powerShellHost -Verb RunAs -ArgumentList $argumentLine -PassThru
 Write-Host "Elevated finalizer launched (PID $($process.Id))." -ForegroundColor Yellow
 Write-Host 'Approve UAC, then completely exit Codex Desktop. The finalizer will wait.' -ForegroundColor Yellow

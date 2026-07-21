@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [string]$DestinationRoot = 'F:\',
-    [string[]]$Browser = @('Chrome', 'Brave', 'Edge'),
+    [string[]]$Browser = @('Chrome', 'ChromeBeta', 'Brave', 'Edge'),
     [bool]$IncludeDeveloper = $true,
     [switch]$IncludeMissing,
     [switch]$Fast,

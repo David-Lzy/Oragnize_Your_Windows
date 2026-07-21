@@ -44,7 +44,7 @@ function Add-ValidationResult {
     param(
         [Parameter(Mandatory)][string]$Name,
         [Parameter(Mandatory)][bool]$Passed,
-        [Parameter(Mandatory)][string]$Detail,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Detail,
         [bool]$Critical = $true
     )
 

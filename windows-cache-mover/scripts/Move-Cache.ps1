@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$DestinationRoot,
-    [string[]]$Browser = @('Chrome', 'Brave', 'Edge'),
+    [string[]]$Browser = @('Chrome', 'ChromeBeta', 'Brave', 'Edge'),
     [bool]$IncludeDeveloper = $true,
     [switch]$DiscardExisting,
     [switch]$Apply

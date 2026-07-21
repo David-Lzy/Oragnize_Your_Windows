@@ -8,8 +8,8 @@
 
 ## 能做什么
 
-- 审计 Chrome、Brave、Edge 的缓存目录、占用、运行状态和既有目录联接。
-- 迁移浏览器普通缓存、代码缓存、GPU 缓存、Service Worker 缓存和 Chrome 本地优化模型。
+- 审计 Chrome、Chrome Beta、Brave、Edge 的缓存目录、占用、运行状态和既有目录联接。
+- 迁移浏览器普通缓存、代码缓存、GPU 缓存、Service Worker 缓存，以及 Chrome / Chrome Beta 本地优化模型。
 - 迁移 pip、npm、Conda 包、Hugging Face、PyTorch、uv 缓存，并固化相应用户环境变量。
 - 查找指定目录下的大文件，自动跳过目录联接，避免重复统计目标盘内容。
 - 每次正式迁移生成 JSON 清单，支持验证和回滚。
@@ -80,6 +80,12 @@
 
 浏览器仍在运行时，脚本会直接中止，不会自动结束进程。
 
+Chrome Beta 在参数中使用名称 `ChromeBeta`，迁移到 `F:\BrowserCache\ChromeBeta`。Chrome 稳定版和 Beta 共用 `chrome.exe` 进程名；迁移其中任一版本前，都应退出所有 Chrome 窗口和后台进程。例如只迁移 Beta：
+
+```powershell
+.\scripts\Move-Cache.ps1 -DestinationRoot 'F:\' -Browser ChromeBeta -Apply
+```
+
 开发工具缓存路径会写入当前用户环境变量，并广播 Windows 环境变更。已经运行的终端或 IDE 仍应重新打开。
 
 ### 4. 验证
@@ -121,7 +127,8 @@
 默认扫描当前用户目录，只报告不删除：
 
 ```powershell
-.\scripts\Find-LargeFiles.ps1 -Path $HOME -MinimumGB 1 -Top 50
+.\scripts\Find-LargeFiles.ps1 -Path $HOME -MinimumGB 1 -Top 50 |
+    Format-Table GB, AllocatedGB, Sparse, LastWriteTime, Path -AutoSize
 ```
 
 扫描整个 C 盘需要更长时间，部分系统目录可能因权限被跳过：
@@ -129,6 +136,8 @@
 ```powershell
 .\scripts\Find-LargeFiles.ps1 -Path 'C:\' -MinimumGB 2 -Top 100
 ```
+
+`GB` 是文件逻辑长度，`AllocatedGB` 是 NTFS 实际分配大小。虚拟磁盘等稀疏文件可能显示很大的 `GB`，但 `Sparse = True` 且 `AllocatedGB` 很小；判断能释放多少空间时应以后者为准。
 
 ## “程序不在 C 盘，为什么 C 盘仍然很大？”
 

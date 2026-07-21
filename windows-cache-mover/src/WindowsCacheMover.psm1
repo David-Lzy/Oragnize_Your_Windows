@@ -70,6 +70,39 @@ function Get-LinkTarget {
     return (@($Item.Target) -join ';')
 }
 
+function Get-AllocatedFileBytes {
+    param([Parameter(Mandatory)][string]$LiteralPath)
+
+    if (-not ('WindowsCacheMover.FileSizeNative' -as [type])) {
+        Add-Type @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+
+namespace WindowsCacheMover
+{
+    public static class FileSizeNative
+    {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern uint GetCompressedFileSizeW(string fileName, out uint high);
+
+        public static long GetAllocatedBytes(string path)
+        {
+            uint high;
+            uint low = GetCompressedFileSizeW(path, out high);
+            if (low == 0xffffffff && Marshal.GetLastWin32Error() != 0)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            return checked((long)(((ulong)high << 32) | low));
+        }
+    }
+}
+'@
+    }
+    return [WindowsCacheMover.FileSizeNative]::GetAllocatedBytes((Get-NormalizedPath -Path $LiteralPath))
+}
+
 function Remove-DirectoryJunction {
     param([Parameter(Mandatory)][string]$LiteralPath)
     $item = Get-Item -LiteralPath $LiteralPath -Force -ErrorAction Stop
@@ -149,6 +182,11 @@ function Get-CacheCatalog {
             Root = Join-Path $LocalAppData 'Google\Chrome\User Data'
         },
         [pscustomobject]@{
+            Name = 'ChromeBeta'
+            ProcessName = 'chrome'
+            Root = Join-Path $LocalAppData 'Google\Chrome Beta\User Data'
+        },
+        [pscustomobject]@{
             Name = 'Brave'
             ProcessName = 'brave'
             Root = Join-Path $LocalAppData 'BraveSoftware\Brave-Browser\User Data'
@@ -187,7 +225,7 @@ function Get-CacheCatalog {
         }
         $browserTarget = Join-Path $destination (Join-Path 'BrowserCache' $browser.Name)
         $browserRootCaches = @($commonRootCaches)
-        if ($browser.Name -eq 'Chrome') {
+        if ($browser.Name -in @('Chrome', 'ChromeBeta')) {
             $browserRootCaches += $chromeRootCaches
         }
         foreach ($relative in $browserRootCaches) {
@@ -238,7 +276,7 @@ function Get-CacheAudit {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$DestinationRoot,
-        [string[]]$Browser = @('Chrome', 'Brave', 'Edge'),
+        [string[]]$Browser = @('Chrome', 'ChromeBeta', 'Brave', 'Edge'),
         [switch]$IncludeDeveloper,
         [switch]$IncludeMissing,
         [switch]$Fast,
@@ -333,7 +371,7 @@ function Invoke-CacheMigration {
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
     param(
         [Parameter(Mandatory)][string]$DestinationRoot,
-        [string[]]$Browser = @('Chrome', 'Brave', 'Edge'),
+        [string[]]$Browser = @('Chrome', 'ChromeBeta', 'Brave', 'Edge'),
         [switch]$IncludeDeveloper,
         [switch]$DiscardExisting,
         [string]$HomePath = $HOME,
@@ -534,8 +572,11 @@ function Find-LargeFile {
                     } else {
                         $file = New-Object System.IO.FileInfo($entry)
                         if ($file.Length -ge $minimumBytes) {
+                            $allocatedBytes = try { Get-AllocatedFileBytes -LiteralPath $file.FullName } catch { $file.Length }
                             $matches.Add([pscustomobject]@{
                                 GB = [math]::Round($file.Length / 1GB, 3)
+                                AllocatedGB = [math]::Round($allocatedBytes / 1GB, 3)
+                                Sparse = [bool](($attributes -band [System.IO.FileAttributes]::SparseFile) -ne 0)
                                 LastWriteTime = $file.LastWriteTime
                                 Path = $file.FullName
                             })

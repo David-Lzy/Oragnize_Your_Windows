@@ -52,11 +52,11 @@ allowed_categories = [
 ]
 
 [document_categories."Sensitive/Keys"]
-local_only = false
+local_only = true
 keywords = ["private key", "ssh key", "api key", "secret key", "password", "credential", "seed phrase", "密钥", "密码", "凭据", "助记词"]
 
 [document_categories."Sensitive/Identity_Finance"]
-local_only = false
+local_only = true
 keywords = ["passport", "driver licence", "driver license", "identity card", "bank statement", "tax file number", "payslip", "social security", "护照", "身份证", "银行账单", "税号", "工资单"]
 
 [document_categories."Work/Finance_Invoices"]
