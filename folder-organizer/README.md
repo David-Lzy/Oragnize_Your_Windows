@@ -1,5 +1,7 @@
 # Folder Organizer
 
+> [Repository overview](../README.md) · [Shared safety guide](../docs/SAFETY.md) · [Testing guide](../docs/TESTING.md)
+
 `folder-organizer` is a safety-first Windows download-folder organizer. Deterministic Python code handles file discovery, hashing, version comparison, plan validation, moves, rollback, and indexing. An optional LLM may propose document categories, but it never receives direct filesystem authority.
 
 ## Safety model

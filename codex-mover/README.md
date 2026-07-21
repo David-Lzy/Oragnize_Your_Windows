@@ -1,5 +1,7 @@
 # Codex Mover
 
+> [返回项目总览](../README.md) · [共享安全指南](../docs/SAFETY.md) · [测试指南](../docs/TESTING.md)
+
 将 Windows Codex Desktop 占用的主要磁盘空间迁移到其他 NTFS 磁盘，同时保留 Codex 仍然期望存在的原始 C 盘路径。
 
 本项目来源于一次真实迁移：活跃 Codex 对话不能中断或丢失；`.codex`、运行时缓存、Local OpenAI 数据和 MSIX 包需要分别处理；Windows 和磁盘分析工具还会把 Junction 的目标误显示在 C 盘下面。

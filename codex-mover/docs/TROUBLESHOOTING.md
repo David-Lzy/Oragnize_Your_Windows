@@ -1,5 +1,7 @@
 # 故障排查
 
+> [返回 Codex Mover](../README.md) · [项目总览](../../README.md) · [共享安全指南](../../docs/SAFETY.md)
+
 ## SpaceSniffer 仍显示 C 盘有 Codex
 
 先看它显示的是哪一种：
