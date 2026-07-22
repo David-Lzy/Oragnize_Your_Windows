@@ -14,6 +14,7 @@ param(
     [Parameter(Mandatory)][string]$DestinationRoot,
     [string]$SourceProfile = $env:USERPROFILE,
     [ValidatePattern('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')][string]$CurrentThreadId,
+    # Retained for command-line compatibility. AppX migration is now always skipped.
     [switch]$SkipMsix,
     [switch]$StageOnly,
     [switch]$Force
@@ -54,6 +55,11 @@ if (-not $sourceProfilePath.Equals($currentProfilePath, [StringComparison]::Ordi
 $sourceHome = Join-Path $sourceProfilePath '.codex'
 $sourceRuntime = Join-Path $sourceProfilePath '.cache\codex-runtimes'
 $sourceLocal = Join-Path $sourceProfilePath 'AppData\Local\OpenAI\Codex'
+
+$appxPlacement = Get-CodexAppxPlacement
+if (-not $appxPlacement.Safe) {
+    throw "Codex AppX safety check failed: $($appxPlacement.Reason) Keep the Windows-managed AppX package on the system drive and see docs\TROUBLESHOOTING.md before migrating Codex data."
+}
 
 if (-not (Test-Path -LiteralPath $sourceHome)) {
     throw "CODEX_HOME does not exist: $sourceHome"
@@ -162,7 +168,8 @@ $state = [ordered]@{
     }
     current_thread_id = $CurrentThreadId
     current_session_relative_path = $sessionRelativePath
-    skip_msix = [bool]$SkipMsix
+    appx_strategy = 'keep_system_volume'
+    skip_msix = $true
     log = $logPath
     status = $statusPath
 }

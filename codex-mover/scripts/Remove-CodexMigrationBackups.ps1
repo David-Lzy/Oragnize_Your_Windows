@@ -43,6 +43,13 @@ $status = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json
 if ([int]$state.schema_version -ne 1 -or [int]$status.schema_version -ne 1) {
     throw 'Unsupported migration state/status schema version.'
 }
+if ([string]$state.appx_strategy -ne 'keep_system_volume') {
+    throw 'Refusing cleanup because the migration was not staged with the required keep_system_volume AppX strategy.'
+}
+$appxPlacement = Get-CodexAppxPlacement
+if (-not $appxPlacement.Safe) {
+    throw "Refusing cleanup because Codex AppX is not safely stored on the Windows system volume: $($appxPlacement.Reason)"
+}
 $stateDestination = Get-CodexNormalizedPath -Path ([string]$state.destination_root)
 if (-not $stateDestination.Equals($destinationPath, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'DestinationRoot does not match the recorded migration state.'

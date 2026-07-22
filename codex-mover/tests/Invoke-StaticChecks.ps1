@@ -7,6 +7,7 @@ $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $expectedFiles = @(
     'README.md',
     'docs\TROUBLESHOOTING.md',
+    'docs\APPX-PLUGIN-INCIDENT.md',
     'src\CodexMover.Native.cs',
     'src\CodexMover.Common.psm1',
     'scripts\Get-CodexStorageReport.ps1',
@@ -50,6 +51,32 @@ foreach ($file in $codeFiles) {
         if ($content -match $pattern) {
             throw "Machine-specific absolute value matched '$pattern' in $($file.FullName)"
         }
+    }
+}
+
+$forbiddenAppxMutationPattern = '(?i)\b(?:Move-' + 'AppxPackage|Add-' + 'AppxVolume)\b'
+foreach ($file in $codeFiles) {
+    $content = Get-Content -LiteralPath $file.FullName -Raw
+    if ($content -match $forbiddenAppxMutationPattern) {
+        throw "Codex AppX relocation command found in $($file.FullName). The AppX package must stay on the Windows system volume."
+    }
+}
+
+$startScriptContent = Get-Content -LiteralPath (Join-Path $projectRoot 'scripts\Start-CodexMigration.ps1') -Raw
+$finalizeScriptContent = Get-Content -LiteralPath (Join-Path $projectRoot 'scripts\Finalize-CodexMigration.ps1') -Raw
+$testScriptContent = Get-Content -LiteralPath (Join-Path $projectRoot 'scripts\Test-CodexMigration.ps1') -Raw
+$cleanupScriptContent = Get-Content -LiteralPath (Join-Path $projectRoot 'scripts\Remove-CodexMigrationBackups.ps1') -Raw
+if ($startScriptContent -notmatch "appx_strategy\s*=\s*'keep_system_volume'") {
+    throw 'Start-CodexMigration.ps1 does not record the required keep_system_volume AppX strategy.'
+}
+foreach ($scriptCheck in @(
+    [pscustomobject]@{ Name = 'Start'; Content = $startScriptContent },
+    [pscustomobject]@{ Name = 'Finalize'; Content = $finalizeScriptContent },
+    [pscustomobject]@{ Name = 'Test'; Content = $testScriptContent },
+    [pscustomobject]@{ Name = 'Cleanup'; Content = $cleanupScriptContent }
+)) {
+    if ($scriptCheck.Content -notmatch '\bGet-CodexAppxPlacement\b') {
+        throw "$($scriptCheck.Name) migration script does not enforce Codex AppX placement."
     }
 }
 
@@ -164,3 +191,4 @@ Write-Host ("PASS parsed {0} PowerShell files" -f $powerShellFiles.Count)
 Write-Host ("PASS verified {0} expected project files" -f $expectedFiles.Count)
 Write-Host 'PASS compiled CodexMover.Native.cs'
 Write-Host 'PASS machine-specific value scan'
+Write-Host 'PASS Codex AppX system-volume guard'

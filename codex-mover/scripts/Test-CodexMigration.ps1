@@ -26,6 +26,9 @@ $status = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json
 if ([int]$state.schema_version -ne 1 -or [int]$status.schema_version -ne 1) {
     throw 'Unsupported migration state/status schema version.'
 }
+if ([string]$state.appx_strategy -ne 'keep_system_volume') {
+    throw 'Migration state was not created with the required keep_system_volume AppX strategy.'
+}
 if (-not (Get-CodexNormalizedPath -Path ([string]$state.destination_root)).Equals($destinationPath, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'DestinationRoot does not match the recorded migration state.'
 }
@@ -105,42 +108,13 @@ else {
     Add-ValidationResult -Name 'Protected current session' -Passed $true -Detail 'No task ID/session file was recorded.' -Critical $false
 }
 
-if ([bool]$state.skip_msix) {
-    Add-ValidationResult -Name 'MSIX physical payload' -Passed $true -Detail 'Skipped by migration request.' -Critical $false
-}
-else {
-    $package = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $package) {
-        Add-ValidationResult -Name 'MSIX physical payload' -Passed $false -Detail 'OpenAI.Codex is not installed.'
-    }
-    else {
-        $destinationDrive = [IO.Path]::GetPathRoot($destinationPath).Substring(0, 1)
-        $physicalRoot = Join-Path (('{0}:\WindowsApps' -f $destinationDrive)) $package.PackageFullName
-        $logicalRoot = [string]$package.InstallLocation
-        $physicalExists = Test-Path -LiteralPath $physicalRoot
-        $logicalExecutable = Join-Path $logicalRoot 'app\ChatGPT.exe'
-        $physicalExecutable = Join-Path $physicalRoot 'app\ChatGPT.exe'
-        $sameExecutable = $false
-        if ((Test-Path -LiteralPath $logicalExecutable) -and (Test-Path -LiteralPath $physicalExecutable)) {
-            try {
-                $sameExecutable = Test-CodexSameFileId -FirstPath $logicalExecutable -SecondPath $physicalExecutable
-            }
-            catch {
-                $sameExecutable = $false
-            }
-        }
-        $logicalOnDestination = (Get-CodexNormalizedPath -Path $logicalRoot).StartsWith(('{0}:\' -f $destinationDrive), [StringComparison]::OrdinalIgnoreCase)
-        $logicalItem = Get-Item -LiteralPath $logicalRoot -Force -ErrorAction SilentlyContinue
-        $junctionMatches = $false
-        if ($logicalItem -and $logicalItem.LinkType -eq 'Junction') {
-            $logicalTarget = [string]($logicalItem.Target | Select-Object -First 1)
-            $junctionMatches = (Get-CodexNormalizedPath -Path $logicalTarget).Equals((Get-CodexNormalizedPath -Path $physicalRoot), [StringComparison]::OrdinalIgnoreCase)
-        }
-        $appxPassed = $physicalExists -and ($logicalOnDestination -or $junctionMatches -or $sameExecutable)
-        $appxDetail = 'logical={0}; physical={1}; same-file={2}' -f $logicalRoot, $physicalRoot, $sameExecutable
-        Add-ValidationResult -Name 'MSIX physical payload' -Passed $appxPassed -Detail $appxDetail
-    }
-}
+$appxPlacement = Get-CodexAppxPlacement
+$appxDetail = 'logical={0}; system-drive={1}; reparse={2}; reason={3}' -f `
+    $appxPlacement.LogicalInstallLocation,
+    $appxPlacement.SystemDrive,
+    $appxPlacement.IsReparsePoint,
+    $appxPlacement.Reason
+Add-ValidationResult -Name 'Codex AppX system-volume placement' -Passed ([bool]$appxPlacement.Safe) -Detail $appxDetail
 
 $failedCritical = @($results | Where-Object { $_.Critical -and -not $_.Passed })
 $report = [ordered]@{

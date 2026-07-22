@@ -69,6 +69,62 @@ function Get-CodexPathSummary {
     }
 }
 
+function Get-CodexAppxPlacement {
+    [CmdletBinding()]
+    param()
+
+    $systemDrive = Get-CodexNormalizedPath -Path ([IO.Path]::GetPathRoot($env:SystemRoot))
+    $package = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $package) {
+        return [pscustomobject]@{
+            Installed = $false
+            Safe = $false
+            PackageFullName = $null
+            LogicalInstallLocation = $null
+            SystemDrive = $systemDrive
+            IsReparsePoint = $false
+            PhysicalTarget = $null
+            Reason = 'OpenAI.Codex is not installed for the current user.'
+        }
+    }
+
+    $logicalLocation = Get-CodexNormalizedPath -Path ([string]$package.InstallLocation)
+    $installItem = Get-Item -LiteralPath $logicalLocation -Force -ErrorAction SilentlyContinue
+    $isReparsePoint = [bool]($installItem -and ($installItem.Attributes -band [IO.FileAttributes]::ReparsePoint))
+    $physicalTarget = if ($installItem -and $installItem.Target) {
+        [string]($installItem.Target | Select-Object -First 1)
+    }
+    else {
+        $null
+    }
+    $installDrive = Get-CodexNormalizedPath -Path ([IO.Path]::GetPathRoot($logicalLocation))
+    $onSystemDrive = $installDrive.Equals($systemDrive, [StringComparison]::OrdinalIgnoreCase)
+    $safe = [bool]($installItem -and $onSystemDrive -and -not $isReparsePoint)
+    $reason = if (-not $installItem) {
+        'The registered AppX install location does not exist.'
+    }
+    elseif (-not $onSystemDrive) {
+        'The Codex AppX package is registered outside the Windows system drive.'
+    }
+    elseif ($isReparsePoint) {
+        'The Codex AppX package root is a reparse point, which indicates relocation to another AppX volume.'
+    }
+    else {
+        'The Codex AppX package is stored directly on the Windows system drive.'
+    }
+
+    [pscustomobject]@{
+        Installed = $true
+        Safe = $safe
+        PackageFullName = [string]$package.PackageFullName
+        LogicalInstallLocation = $logicalLocation
+        SystemDrive = $systemDrive
+        IsReparsePoint = $isReparsePoint
+        PhysicalTarget = $physicalTarget
+        Reason = $reason
+    }
+}
+
 function Write-CodexJson {
     [CmdletBinding()]
     param(
@@ -229,6 +285,7 @@ Export-ModuleMember -Function @(
     'Test-CodexAdministrator',
     'Initialize-CodexMoverNative',
     'Get-CodexPathSummary',
+    'Get-CodexAppxPlacement',
     'Write-CodexJson',
     'Invoke-CodexRobocopy',
     'Get-CodexCoreProcesses',
