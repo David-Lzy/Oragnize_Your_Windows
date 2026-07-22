@@ -4,7 +4,7 @@
 
 将 Windows Codex Desktop 占用的主要磁盘空间迁移到其他 NTFS 磁盘，同时保留 Codex 仍然期望存在的原始 C 盘路径。
 
-本项目来源于一次真实迁移：活跃 Codex 对话不能中断或丢失；`.codex`、运行时缓存、Local OpenAI 数据和 MSIX 包需要分别处理；Windows 和磁盘分析工具还会把 Junction 的目标误显示在 C 盘下面。
+本项目来源于一次真实迁移：活跃 Codex 对话不能中断或丢失；`.codex`、运行时缓存和 Local OpenAI 数据可以迁移，但 AppX 程序包必须留在系统盘；Windows 和磁盘分析工具还会把 Junction 的目标误显示在 C 盘下面。
 
 ## 会迁移什么
 
@@ -13,10 +13,10 @@
 | `%USERPROFILE%\.codex` | `<目标>\home` |
 | `%USERPROFILE%\.cache\codex-runtimes` | `<目标>\cache\codex-runtimes` |
 | `%LOCALAPPDATA%\OpenAI\Codex` | `<目标>\local\OpenAI\Codex` |
-| Codex MSIX 包 | 目标盘的 `WindowsApps` AppX Volume |
-| MSIX 用户数据 | 由 Windows 自动迁移到目标盘 `WpSystem` |
+| Codex AppX/MSIX 包 | **保留 Windows 系统盘，不迁移** |
+| MSIX 用户数据 | 继续由 Windows 在系统盘管理 |
 
-原路径会变成 Junction。Windows 注册表、AppX 元数据和 Junction 本身仍会在 C 盘保留极少量信息，这是正常且必要的。
+前三个可迁移路径会变成 Junction。AppX 程序包不会创建跨盘 Junction；这是为了避免 bundled plugin 资源复制失败并导致 Chrome 扩展缺少 app-server `nodePath`。完整事故原因见 [AppX 插件故障记录](./docs/APPX-PLUGIN-INCIDENT.md)。
 
 ## 推荐流程
 
@@ -39,7 +39,7 @@ UAC 窗口出现后：
 
 1. 点击“是”。
 2. 完全退出 Codex Desktop。
-3. 等管理员窗口完成最终同步、原子切换和 AppX 移动。
+3. 等管理员窗口完成最终同步和原子切换；AppX 程序包会留在系统盘。
 4. Codex 会尝试自动重新打开。
 
 如果目标下已经存在 `home`、`cache\codex-runtimes` 或 `local\OpenAI\Codex`，脚本默认停止，避免覆盖别的迁移。只有确认这些目录是同一次迁移留下的数据时，才使用 `-Force` 继续合并/镜像。
@@ -84,13 +84,15 @@ UAC 窗口出现后：
 - 最终路径切换必须在 UAC 管理员窗口中执行。
 - 收尾脚本等待 Codex 核心进程完全退出；若同步期间进程重新出现，会再次等待并重新同步。
 - UAC 收尾器会再次校验状态文件中的源/目标路径，并拒绝经过 ReparsePoint 的路径组件。
+- 开始、收尾和验收都会确认 OpenAI.Codex AppX 包直接位于系统盘；检测到跨盘 AppX 或包根 ReparsePoint 时会停止。
 - C 盘源目录使用 Win32 `MoveFileEx` 同卷原子改名，随后才创建 Junction；临时文件锁会触发有限次数重试，日志保留 Win32 错误码和系统消息。
 - 切换失败时会尝试按逆序恢复原目录。
 - 清理脚本只接受状态文件记录的精确备份路径。
+- 清理备份前会再次确认迁移状态采用 `keep_system_volume`，且 AppX 仍直接位于系统盘。
 - 长路径清理由 Win32 枚举实现，遇到 ReparsePoint 只删除联接本身，不递归进入目标。
 - 迁移会把 `auth.json` 作为不透明状态文件复制到目标盘，但不会读取、打印或提交其中的凭据。
 
-更多已知问题见 [故障排查](./docs/TROUBLESHOOTING.md)。
+更多已知问题见 [故障排查](./docs/TROUBLESHOOTING.md)；迁移器为何不再移动 AppX 见 [事故记录与设计决策](./docs/APPX-PLUGIN-INCIDENT.md)。
 
 ## 要求
 

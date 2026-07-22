@@ -10,13 +10,13 @@
 | --- | --- | --- | --- |
 | [Folder Organizer](./folder-organizer/) | 下载目录杂乱、重复文件、旧安装包、文档分类和本地检索 | 生成只读计划 | `apply --confirm APPLY` 才移动文件；写入 rollback 清单，可 `undo` |
 | [Windows Cache Mover](./windows-cache-mover/) | Chrome（含 Beta）、Brave、Edge 与开发工具缓存持续占用 C 盘 | 审计或预览 | `-Apply` 后复制/建立 Junction；JSON 清单支持验证与恢复 |
-| [Codex Mover](./codex-mover/) | Windows Codex 的 `.codex`、运行时缓存、本地数据和 MSIX 占用 C 盘 | 只读盘点与预复制 | UAC 收尾器等待 Codex 退出后切换；保留 C 盘备份，验收后再清理 |
+| [Codex Mover](./codex-mover/) | Windows Codex 的 `.codex`、运行时缓存和本地数据占用 C 盘 | 只读盘点与预复制；AppX 留在系统盘 | UAC 收尾器等待 Codex 退出后切换；保留 C 盘备份，验收后再清理 |
 
 ### 应该选择哪个？
 
 - 整理 `Downloads` 或其他普通文件夹：使用 **Folder Organizer**。
 - 搬走可重建的浏览器/开发工具缓存：使用 **Windows Cache Mover**。
-- 搬走 Codex Desktop 的会话、配置、运行时和应用包：使用 **Codex Mover**。
+- 搬走 Codex Desktop 的会话、配置、运行时和本地数据：使用 **Codex Mover**；Windows 管理的 AppX 应用包不会迁移。
 - 清理 `WinSxS`、`DriverStore`、Windows Installer、Defender、Windows Update、整份 `AppData`：这些不属于本仓库支持范围，请使用 Windows 或软件自身的维护方式。
 
 ## 共同设计原则
@@ -88,7 +88,7 @@ Pop-Location
 | Windows Cache Mover | Windows 10/11 | 5.1 或 7+ | 本机健康 NTFS 目标卷；迁移前退出相关应用 |
 | Codex Mover | Windows 10/11 | 5.1 或 7+ | 本机 NTFS 目标卷、足够空间、可确认 UAC |
 
-管理员权限并非所有命令都需要。Codex 的最终目录切换、AppX 移动及 sidecar 用户删除必须在提升权限后完成；普通盘点和大多数预览命令应在普通用户权限下运行。
+管理员权限并非所有命令都需要。Codex 的最终目录切换和 sidecar 用户删除必须在提升权限后完成；普通盘点和大多数预览命令应在普通用户权限下运行。Codex AppX 固定保留在系统盘。
 
 ## 仓库结构
 
@@ -98,7 +98,7 @@ Oragnize_Your_Windows/
 ├── docs/                         共享安全与测试文档
 ├── folder-organizer/             Python 文件整理与本地索引
 ├── windows-cache-mover/          PowerShell 缓存审计与 Junction 迁移
-└── codex-mover/                  PowerShell/C# Codex 数据与 MSIX 迁移
+└── codex-mover/                  PowerShell/C# Codex 数据迁移与 AppX 位置保护
 ```
 
 ## 测试
@@ -127,6 +127,7 @@ Windows PowerShell 5.1 的兼容性命令和预期结果见 [docs/TESTING.md](./
 - [共享安全指南](./docs/SAFETY.md)
 - [开发与测试指南](./docs/TESTING.md)
 - [Codex Mover 故障排查](./codex-mover/docs/TROUBLESHOOTING.md)
+- [Codex AppX 迁盘导致插件失效的事故记录](./codex-mover/docs/APPX-PLUGIN-INCIDENT.md)
 
 ## 非目标
 

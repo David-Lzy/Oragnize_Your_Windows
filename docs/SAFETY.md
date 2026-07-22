@@ -64,7 +64,8 @@ Windows Junction/ReparsePoint 让原路径继续可用，但数据物理上位�
 - 从当前 Codex 任务内发起迁移时，显式传入 `-CurrentThreadId`。
 - UAC 收尾器会等待 Codex 核心进程退出，执行最终同步、哈希校验和原子目录切换。
 - 原 C 盘目录先改名为备份，再建立 Junction；运行验收脚本前不要删除备份。
-- MSIX 的逻辑路径仍可能显示在 C 盘，应结合 E 盘包目录和 `ChatGPT.exe` 文件 ID 判断物理位置。
+- OpenAI.Codex AppX/MSIX 程序包必须直接保留在 Windows 系统盘。迁移器检测到包根 ReparsePoint 或非系统卷位置时会停止；不要用 `Move-AppxPackage`、自建 AppX volume 或手工 Junction 绕过检查。
+- 只验证 AppX 文件存在、Junction 目标或可执行文件 ID 不足以证明插件健康；跨盘受保护资源可能在 bundled plugin staging 阶段才失败。
 - `Remove-CodexSidecarUser.ps1` 删除的是独立 Windows 账户，不是普通 `.codex` 文件夹；它要求精确 SID，并且不会创建备份。
 
 ## 凭据与外部模型

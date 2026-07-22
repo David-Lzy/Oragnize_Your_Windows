@@ -7,7 +7,7 @@
 先看它显示的是哪一种：
 
 1. `C:\Users\<当前用户>\.codex`、`.cache\codex-runtimes` 或 `AppData\Local\OpenAI\Codex`：迁移后它们应是 Junction。某些磁盘分析工具会跟随 Junction，把 E 盘目标尺寸算到 C 盘树中。
-2. `C:\Program Files\WindowsApps\OpenAI.Codex_*`：Windows 可能继续报告逻辑 C 路径，但包目录本身已是指向 E 的 Junction。
+2. `C:\Program Files\WindowsApps\OpenAI.Codex_*`：Codex Mover 现在有意把 AppX 程序包留在系统盘；这部分占用不会迁移。
 3. `C:\Users\codex`：这是另一个 Windows 用户配置文件，与当前用户的 `.codex` 完全不同，必须单独处理。
 
 使用 `Get-Item -Force` 检查 `LinkType` 和 `Target`，并以磁盘可用空间变化作为物理占用判断。
@@ -34,17 +34,11 @@ Robocopy 的退出码是位标志。退出码 2 表示目标端有额外文件�
 
 需要定位非 Codex 进程的文件句柄时，可以从 Microsoft Sysinternals 下载 `handle64.exe`，验证其 Microsoft 数字签名后，临时放到 `<目标>\migration\runtime\handle64.exe`。收尾器只在改名失败时调用它并把结果写入日志；该第三方二进制不应提交到仓库。没有该文件时迁移逻辑不受影响。
 
-## Get-AppxPackage 仍报告 C 路径
+## AppX 安全检查拒绝迁移
 
-`Move-AppxPackage` 完成后，`Get-AppxPackage.InstallLocation` 可能仍返回逻辑 C 路径。判断物理位置时应检查：
+如果报告显示 OpenAI.Codex 包根目录是 ReparsePoint，或物理目标位于非系统盘，迁移器会在修改任何 Codex 目录前停止。这是有意的安全边界：跨盘 AppX 虽然可能通过文件存在性和 ID 校验，仍可能使 bundled plugin staging 返回 `EPERM`，最终令 Chrome 扩展报 app-server 清单缺少 `nodePath`。
 
-- C 的包根目录是否为指向目标盘 `WindowsApps` 的 Junction。
-- 目标盘包目录是否存在。
-- C/E 两条逻辑路径下的 `ChatGPT.exe` 文件 ID 是否一致。
-
-Windows AppX 部署日志中的 `MovePackageOperation` 成功事件也是有效证据。
-
-MSIX 移动失败不会撤销已经验证完成的 `.codex`/缓存 Junction；状态会写成 `success_pending_cleanup_with_warnings`，验收脚本仍会把 MSIX 项标记为失败。在修好 AppX 问题并重新验收前，可以保留 C 盘迁移备份。
+不要手工复制、接管 ACL 或删除 `WindowsApps` 包目录。先保留迁移状态和备份，完全退出 Codex 与 Chrome，使用 Windows 的 AppX 管理流程把包恢复到 system AppX volume。背景、确认命令和恢复后的验收步骤见 [AppX 插件故障记录](./APPX-PLUGIN-INCIDENT.md)。
 
 ## 当前对话文件被占用，无法算 SHA-256
 

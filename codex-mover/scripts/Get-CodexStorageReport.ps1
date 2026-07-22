@@ -43,17 +43,18 @@ foreach ($path in $paths) {
     }
 }
 
-$package = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue | Select-Object -First 1
+$appxPlacement = Get-CodexAppxPlacement
 $packageSummary = $null
-if ($package) {
-    $installItem = Get-Item -LiteralPath $package.InstallLocation -Force -ErrorAction SilentlyContinue
+if ($appxPlacement.Installed) {
     $packageSummary = [pscustomobject]@{
-        Name = $package.Name
-        PackageFullName = $package.PackageFullName
-        LogicalInstallLocation = $package.InstallLocation
-        LinkType = $installItem.LinkType
-        PhysicalTarget = ($installItem.Target -join ';')
-        Status = [string]$package.Status
+        Name = 'OpenAI.Codex'
+        PackageFullName = $appxPlacement.PackageFullName
+        LogicalInstallLocation = $appxPlacement.LogicalInstallLocation
+        SystemDrive = $appxPlacement.SystemDrive
+        SystemVolumeSafe = $appxPlacement.Safe
+        IsReparsePoint = $appxPlacement.IsReparsePoint
+        PhysicalTarget = $appxPlacement.PhysicalTarget
+        PlacementReason = $appxPlacement.Reason
     }
 }
 

@@ -63,6 +63,9 @@ $state = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
 if ([int]$state.schema_version -ne 1) {
     throw "Unsupported migration-state schema version: $($state.schema_version)"
 }
+if ([string]$state.appx_strategy -ne 'keep_system_volume') {
+    throw 'Migration state does not contain the required keep_system_volume AppX strategy. Restage with the current Start-CodexMigration.ps1.'
+}
 $destinationRoot = Get-CodexNormalizedPath -Path ([string]$state.destination_root)
 $destinationDriveRoot = [IO.Path]::GetPathRoot($destinationRoot)
 if ($destinationDriveRoot -notmatch '^[A-Za-z]:\\$') {
@@ -98,6 +101,11 @@ Assert-ExactPath -Actual ([string]$state.source.local_codex) -Expected $expected
 Assert-ExactPath -Actual ([string]$state.target.home) -Expected $expectedTargetHome -Label 'target.home'
 Assert-ExactPath -Actual ([string]$state.target.runtime) -Expected $expectedTargetRuntime -Label 'target.runtime'
 Assert-ExactPath -Actual ([string]$state.target.local_codex) -Expected $expectedTargetLocal -Label 'target.local_codex'
+
+$initialAppxPlacement = Get-CodexAppxPlacement
+if (-not $initialAppxPlacement.Safe) {
+    throw "Codex AppX safety check failed before migration: $($initialAppxPlacement.Reason) Restore the package to the Windows system volume before continuing."
+}
 
 $expectedStatusPath = Join-Path $expectedMigrationDirectory 'migration-status.json'
 Assert-ExactPath -Actual ([string]$state.status) -Expected $expectedStatusPath -Label 'status'
@@ -315,64 +323,6 @@ function Switch-DirectoryToJunction {
     }
 }
 
-function Move-CodexAppxPackage {
-    param([Parameter(Mandatory)][string]$DestinationDrive)
-
-    $package = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $package) {
-        throw 'OpenAI.Codex MSIX package is not installed for the current user.'
-    }
-
-    $appxRoot = '{0}:\WindowsApps' -f $DestinationDrive
-    $volume = Get-AppxVolume | Where-Object {
-        $_.PackageStorePath -and
-        (Get-CodexNormalizedPath -Path $_.PackageStorePath).Equals((Get-CodexNormalizedPath -Path $appxRoot), [StringComparison]::OrdinalIgnoreCase)
-    } | Select-Object -First 1
-    if (-not $volume) {
-        Write-FinalizeLog ("Creating AppX volume at {0}." -f $appxRoot)
-        $volume = Add-AppxVolume -Path $appxRoot
-    }
-
-    $physicalPackageRoot = Join-Path $appxRoot $package.PackageFullName
-    if (-not (Test-Path -LiteralPath $physicalPackageRoot)) {
-        Write-FinalizeLog ("Moving MSIX package {0} to {1}." -f $package.PackageFullName, $DestinationDrive)
-        Move-AppxPackage -Package $package.PackageFullName -Volume $volume
-        $package = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction Stop | Select-Object -First 1
-    }
-
-    $logicalPackageRoot = [string]$package.InstallLocation
-    $physicalPackageRoot = Join-Path $appxRoot $package.PackageFullName
-    $logicalExecutable = Join-Path $logicalPackageRoot 'app\ChatGPT.exe'
-    $physicalExecutable = Join-Path $physicalPackageRoot 'app\ChatGPT.exe'
-    $physicalExists = Test-Path -LiteralPath $physicalPackageRoot
-    $sameFile = $false
-    if ((Test-Path -LiteralPath $logicalExecutable) -and (Test-Path -LiteralPath $physicalExecutable)) {
-        $sameFile = Test-CodexSameFileId -FirstPath $logicalExecutable -SecondPath $physicalExecutable
-    }
-    $logicalItem = Get-Item -LiteralPath $logicalPackageRoot -Force -ErrorAction SilentlyContinue
-    $junctionMatches = $false
-    if ($logicalItem -and $logicalItem.LinkType -eq 'Junction') {
-        $logicalTarget = [string]($logicalItem.Target | Select-Object -First 1)
-        $junctionMatches = (Get-CodexNormalizedPath -Path $logicalTarget).Equals((Get-CodexNormalizedPath -Path $physicalPackageRoot), [StringComparison]::OrdinalIgnoreCase)
-    }
-    $installOnDestination = (Get-CodexNormalizedPath -Path $logicalPackageRoot).StartsWith(('{0}:\' -f $DestinationDrive), [StringComparison]::OrdinalIgnoreCase)
-    $verified = $physicalExists -and ($installOnDestination -or $junctionMatches -or $sameFile)
-    if (-not $verified) {
-        throw "MSIX physical-location verification failed for $($package.PackageFullName)"
-    }
-
-    [ordered]@{
-        status = 'moved_or_already_present'
-        package_full_name = $package.PackageFullName
-        logical_install_location = $logicalPackageRoot
-        physical_package_root = $physicalPackageRoot
-        physical_exists = $physicalExists
-        logical_junction_matches = $junctionMatches
-        executable_same_file_id = $sameFile
-        verified = $verified
-    }
-}
-
 function Restart-CodexDesktop {
     $package = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $package) {
@@ -459,21 +409,19 @@ try {
         Write-FinalizeLog 'Protected current-session file verified by physical file ID.'
     }
 
-    if (-not [bool]$state.skip_msix) {
-        try {
-            $destinationDrive = [IO.Path]::GetPathRoot($destinationRoot).Substring(0, 1)
-            $appxResult = Move-CodexAppxPackage -DestinationDrive $destinationDrive
-            Write-FinalizeLog 'MSIX package physical-location verification completed.'
-        }
-        catch {
-            $warnings += ('MSIX migration did not complete: {0}' -f $_.Exception.Message)
-            $appxResult = [ordered]@{ status = 'warning'; verified = $false; error = $_.Exception.Message }
-            Write-FinalizeLog $warnings[-1]
-        }
+    $finalAppxPlacement = Get-CodexAppxPlacement
+    if (-not $finalAppxPlacement.Safe) {
+        throw "Codex AppX moved away from the system volume during migration: $($finalAppxPlacement.Reason)"
     }
-    else {
-        $appxResult = [ordered]@{ status = 'skipped'; verified = $null }
+    $appxResult = [ordered]@{
+        status = 'kept_on_system_volume'
+        package_full_name = $finalAppxPlacement.PackageFullName
+        logical_install_location = $finalAppxPlacement.LogicalInstallLocation
+        system_drive = $finalAppxPlacement.SystemDrive
+        is_reparse_point = $finalAppxPlacement.IsReparsePoint
+        verified = $true
     }
+    Write-FinalizeLog 'Codex AppX remained on the Windows system volume.'
 
     $finalStatus = if ($warnings.Count -eq 0) { 'success_pending_cleanup' } else { 'success_pending_cleanup_with_warnings' }
     Write-FinalizeStatus -Status $finalStatus
