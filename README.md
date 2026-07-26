@@ -17,6 +17,7 @@
 - 整理 `Downloads` 或其他普通文件夹：使用 **Folder Organizer**。
 - 搬走可重建的浏览器/开发工具缓存：使用 **Windows Cache Mover**。
 - 搬走 Codex Desktop 的会话、配置、运行时和本地数据：使用 **Codex Mover**；Windows 管理的 AppX 应用包不会迁移。
+- 把单个 SSH 远程任务迁到另一个 `CODEX_HOME` 后，修复 Windows Desktop 的 Host/project 路由：阅读 [SSH 远程 Session 的 Windows 兼容说明](./codex-mover/docs/SSH-REMOTE-SESSION-WINDOWS-COMPATIBILITY.md)。
 - 清理 `WinSxS`、`DriverStore`、Windows Installer、Defender、Windows Update、整份 `AppData`：这些不属于本仓库支持范围，请使用 Windows 或软件自身的维护方式。
 
 ## 共同设计原则
@@ -128,6 +129,7 @@ Windows PowerShell 5.1 的兼容性命令和预期结果见 [docs/TESTING.md](./
 - [开发与测试指南](./docs/TESTING.md)
 - [Codex Mover 故障排查](./codex-mover/docs/TROUBLESHOOTING.md)
 - [Codex AppX 迁盘导致插件失效的事故记录](./codex-mover/docs/APPX-PLUGIN-INCIDENT.md)
+- [SSH 远程 Session 迁移后的 Windows Desktop 兼容](./codex-mover/docs/SSH-REMOTE-SESSION-WINDOWS-COMPATIBILITY.md)
 
 ## 非目标
 

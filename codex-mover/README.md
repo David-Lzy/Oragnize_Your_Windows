@@ -62,6 +62,21 @@ UAC 窗口出现后：
 
 如果不提供任务 ID，脚本会使用 `.codex\sessions` 中最后修改的 JSONL。自动选择适合普通迁移，但从正在进行的 Codex 对话内迁移时，显式任务 ID更可靠。
 
+## SSH 远程 Session 的 Windows 兼容
+
+把单个 task 从一个 SSH 连接的 `CODEX_HOME` 移到另一个后，Linux 端 rollout/SQLite 迁移和 Windows Desktop 路由是两个独立步骤。典型失败表现是：侧栏已经显示目标 Host，但点击后变成“新任务”，并提示 `no rollout found for thread id ...`。先确保目标 SQLite 使用 `$CODEX_HOME/sessions/...` 逻辑路径而不是软链接解析后的磁盘 realpath；再处理 Windows 路由。
+
+先完成远端复制、数据库索引和真实 `thread/read` 验证；再完全退出所有 Windows Session 中的 Codex Desktop，使用默认只预览的路由脚本：
+
+```powershell
+.\scripts\Repair-CodexRemoteThreadRoute.ps1 `
+    -ThreadId '<task UUID>' `
+    -TargetHost '<目标 SSH alias>' `
+    -TargetRemotePath '/srv/projects/personal'
+```
+
+确认 host、project ID 与 path 后，追加 `-Apply`。脚本会备份 `.codex-global-state.json` 及其 `.bak`，并统一 assignment、workspace、sidebar 与 writable root。完整根因、远端迁移顺序、恢复方法和这次实测代码见 [SSH 远程 Session 迁移后的 Windows Desktop 兼容](./docs/SSH-REMOTE-SESSION-WINDOWS-COMPATIBILITY.md)。
+
 ## Sidecar 用户
 
 有些机器还存在名为 `codex` 的独立 Windows 用户配置文件，例如 `C:\Users\codex`。它不是当前用户 `.codex` 目录，也不会随当前用户迁移自动消失。
@@ -92,7 +107,7 @@ UAC 窗口出现后：
 - 长路径清理由 Win32 枚举实现，遇到 ReparsePoint 只删除联接本身，不递归进入目标。
 - 迁移会把 `auth.json` 作为不透明状态文件复制到目标盘，但不会读取、打印或提交其中的凭据。
 
-更多已知问题见 [故障排查](./docs/TROUBLESHOOTING.md)；迁移器为何不再移动 AppX 见 [事故记录与设计决策](./docs/APPX-PLUGIN-INCIDENT.md)。
+更多已知问题见 [故障排查](./docs/TROUBLESHOOTING.md)；迁移器为何不再移动 AppX 见 [事故记录与设计决策](./docs/APPX-PLUGIN-INCIDENT.md)；SSH 任务迁移后 Windows 客户端为何仍访问旧 Host 见 [远程 Session 兼容说明](./docs/SSH-REMOTE-SESSION-WINDOWS-COMPATIBILITY.md)。
 
 ## 要求
 

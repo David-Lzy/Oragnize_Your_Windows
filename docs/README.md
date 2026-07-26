@@ -16,6 +16,7 @@
 - [Codex Mover](../codex-mover/README.md)：Codex 活跃任务保护、UAC 收尾、数据迁移、AppX 位置保护和备份清理。
 - [Codex Mover 故障排查](../codex-mover/docs/TROUBLESHOOTING.md)：SpaceSniffer、Robocopy、UAC、AppX 和长路径问题。
 - [Codex AppX 插件事故记录](../codex-mover/docs/APPX-PLUGIN-INCIDENT.md)：跨盘 AppX 如何导致 bundled plugin staging 与 Chrome app-server 清单失效，以及项目采用的防复发规则。
+- [SSH 远程 Session 的 Windows 兼容](../codex-mover/docs/SSH-REMOTE-SESSION-WINDOWS-COMPATIBILITY.md)：单 task 迁移的两层状态、`no rollout found` 根因、Desktop 路由修复脚本和恢复步骤。
 
 ## 阅读顺序
 

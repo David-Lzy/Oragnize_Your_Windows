@@ -44,6 +44,15 @@ Robocopy 的退出码是位标志。退出码 2 表示目标端有额外文件�
 
 Codex 运行时 JSONL 会话文件通常被独占写入。这是正常现象。最终 SHA-256 校验必须在 Codex 完全退出后执行；迁移完成并重新打开后，改用 `fsutil file queryfileid` 验证 C/E 路径指向同一文件。
 
+## SSH Session 迁移后打开成“新任务”
+
+如果侧栏能看到迁移后的 task，但打开时报 `no rollout found for thread id ...`，先区分两端：
+
+- 目标 SSH app-server 的 `thread/read` 也失败：检查目标 rollout、`state_5.sqlite` 行、provider、`cwd` 和实际 `CODEX_HOME`。
+- 目标端读取成功，但 Windows 点击失败：Desktop 很可能仍把 task 路由到旧 SSH Host。
+
+仅重启 Desktop 不会自动修正持久 assignment；运行中的 Electron 还会覆盖手工 JSON 修改。先让 Windows 打开一次目标 remote project，再完全关闭所有 Windows Session 中的 Desktop 进程，使用 [Repair-CodexRemoteThreadRoute.ps1](../scripts/Repair-CodexRemoteThreadRoute.ps1) 预览和修复。完整步骤与恢复说明见 [SSH 远程 Session 的 Windows 兼容文档](./SSH-REMOTE-SESSION-WINDOWS-COMPATIBILITY.md)。
+
 ## 清理备份遇到超长路径
 
 Windows PowerShell 5.1 的 `Remove-Item -Recurse` 可能在深层 `node_modules` 路径上失败。不要改用会跟随 Junction 的镜像删除命令。

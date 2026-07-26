@@ -8,6 +8,7 @@ $expectedFiles = @(
     'README.md',
     'docs\TROUBLESHOOTING.md',
     'docs\APPX-PLUGIN-INCIDENT.md',
+    'docs\SSH-REMOTE-SESSION-WINDOWS-COMPATIBILITY.md',
     'src\CodexMover.Native.cs',
     'src\CodexMover.Common.psm1',
     'scripts\Get-CodexStorageReport.ps1',
@@ -15,7 +16,8 @@ $expectedFiles = @(
     'scripts\Finalize-CodexMigration.ps1',
     'scripts\Test-CodexMigration.ps1',
     'scripts\Remove-CodexMigrationBackups.ps1',
-    'scripts\Remove-CodexSidecarUser.ps1'
+    'scripts\Remove-CodexSidecarUser.ps1',
+    'scripts\Repair-CodexRemoteThreadRoute.ps1'
 )
 
 foreach ($relativePath in $expectedFiles) {
@@ -77,6 +79,153 @@ foreach ($scriptCheck in @(
 )) {
     if ($scriptCheck.Content -notmatch '\bGet-CodexAppxPlacement\b') {
         throw "$($scriptCheck.Name) migration script does not enforce Codex AppX placement."
+    }
+}
+
+$routeScriptPath = Join-Path $projectRoot 'scripts\Repair-CodexRemoteThreadRoute.ps1'
+$routeScriptContent = Get-Content -LiteralPath $routeScriptPath -Raw
+$routeRequirements = [ordered]@{
+    'saved remote project lookup' = '\bremote-projects\b'
+    'task assignment update' = '\bthread-project-assignments\b'
+    'workspace state update' = 'thread-workspace-state-v1'
+    'sidebar order update' = '\bsidebar-project-thread-orders\b'
+    'writable root update' = '\bthread-writable-roots\b'
+    'Desktop process guard' = "Get-Process\s+-Name\s+'ChatGPT'"
+    'explicit apply switch' = '\[switch\]\$Apply'
+    'timestamped route backup' = '\.route-fix-backups'
+}
+foreach ($requirement in $routeRequirements.GetEnumerator()) {
+    if ($routeScriptContent -notmatch $requirement.Value) {
+        throw "Remote task route repair is missing $($requirement.Key)."
+    }
+}
+
+$routeTestRoot = Join-Path ([IO.Path]::GetTempPath()) ('codex-route-test-' + [guid]::NewGuid().ToString('N'))
+$routeStatePath = Join-Path $routeTestRoot '.codex-global-state.json'
+$routeThreadId = [guid]::NewGuid().ToString()
+$routeSourceProjectId = [guid]::NewGuid().ToString()
+$routeTargetProjectId = [guid]::NewGuid().ToString()
+$routeSourceHost = 'remote-ssh-discovered:source-account'
+$routeTargetHost = 'remote-ssh-discovered:target-account'
+$routeSourcePath = '/srv/projects/source'
+$routeTargetPath = '/srv/projects/target'
+
+$routeAssignments = [ordered]@{}
+$routeAssignments[$routeThreadId] = [ordered]@{
+    projectKind = 'remote'
+    projectId = $routeSourceProjectId
+    path = $routeSourcePath
+    cwd = $routeSourcePath
+    hostId = $routeSourceHost
+    pendingCoreUpdate = $false
+}
+$routeAtoms = [ordered]@{}
+$routeAtoms["thread-workspace-state-v1:$routeThreadId"] = [ordered]@{
+    revision = [guid]::NewGuid().ToString()
+    project = [ordered]@{
+        projectKind = 'remote'
+        projectId = $routeSourceProjectId
+        path = $routeSourcePath
+        hostId = $routeSourceHost
+    }
+    applied = [ordered]@{
+        projectSources = @($routeSourcePath)
+        cwd = $routeSourcePath
+        runtimeWorkspaceRoots = @($routeSourcePath)
+    }
+    pending = $null
+}
+$routeSidebar = [ordered]@{}
+$routeSidebar[$routeSourceProjectId] = [ordered]@{ threadIds = @($routeThreadId) }
+$routeSidebar[$routeTargetProjectId] = [ordered]@{ threadIds = @() }
+$routeWritableRoots = [ordered]@{}
+$routeWritableRoots[$routeThreadId] = $routeSourcePath
+$routeState = [ordered]@{
+    'remote-projects' = @(
+        [ordered]@{
+            id = $routeSourceProjectId
+            hostId = $routeSourceHost
+            remotePath = $routeSourcePath
+            label = 'source'
+        },
+        [ordered]@{
+            id = $routeTargetProjectId
+            hostId = $routeTargetHost
+            remotePath = $routeTargetPath
+            label = 'target'
+        }
+    )
+    'thread-project-assignments' = $routeAssignments
+    'electron-persisted-atom-state' = $routeAtoms
+    'sidebar-project-thread-orders' = $routeSidebar
+    'projectless-thread-ids' = @($routeThreadId)
+    'thread-writable-roots' = $routeWritableRoots
+}
+
+New-Item -ItemType Directory -Path $routeTestRoot -Force | Out-Null
+try {
+    [IO.File]::WriteAllText(
+        $routeStatePath,
+        ($routeState | ConvertTo-Json -Depth 20 -Compress),
+        (New-Object Text.UTF8Encoding($false))
+    )
+    $routeHashBefore = (Get-FileHash -LiteralPath $routeStatePath -Algorithm SHA256).Hash
+    $routeDryRunOutput = & $routeScriptPath `
+        -ThreadId $routeThreadId `
+        -TargetHost 'target-account' `
+        -TargetRemotePath $routeTargetPath `
+        -StatePath $routeStatePath 6>&1 | Out-String
+    $routeHashAfter = (Get-FileHash -LiteralPath $routeStatePath -Algorithm SHA256).Hash
+    if ($routeHashBefore -ne $routeHashAfter -or $routeDryRunOutput -notmatch 'DRY RUN') {
+        throw 'Remote task route dry-run changed its input or omitted the dry-run result.'
+    }
+
+    & {
+        param(
+            [string]$ScriptPath,
+            [string]$TaskId,
+            [string]$RemotePath,
+            [string]$DesktopStatePath
+        )
+
+        function Get-Process {
+            param(
+                [string[]]$Name,
+                $ErrorAction
+            )
+            return @()
+        }
+
+        & $ScriptPath `
+            -ThreadId $TaskId `
+            -TargetHost 'target-account' `
+            -TargetRemotePath $RemotePath `
+            -StatePath $DesktopStatePath `
+            -Apply | Out-Null
+    } $routeScriptPath $routeThreadId $routeTargetPath $routeStatePath
+
+    $routePatchedState = Get-Content -LiteralPath $routeStatePath -Raw | ConvertFrom-Json
+    $routePatchedAssignment = $routePatchedState.'thread-project-assignments'.$routeThreadId
+    $routePatchedWorkspace = $routePatchedState.'electron-persisted-atom-state'."thread-workspace-state-v1:$routeThreadId"
+    $routeSourceOrder = @($routePatchedState.'sidebar-project-thread-orders'.$routeSourceProjectId.threadIds)
+    $routeTargetOrder = @($routePatchedState.'sidebar-project-thread-orders'.$routeTargetProjectId.threadIds)
+    if ($routePatchedAssignment.projectId -ne $routeTargetProjectId -or
+        $routePatchedAssignment.hostId -ne $routeTargetHost -or
+        $routePatchedWorkspace.project.projectId -ne $routeTargetProjectId -or
+        $routeSourceOrder -contains $routeThreadId -or
+        $routeTargetOrder -notcontains $routeThreadId -or
+        $routePatchedState.'thread-writable-roots'.$routeThreadId -ne $routeTargetPath) {
+        throw 'Remote task route apply test did not update every required route field.'
+    }
+    if (-not (Test-Path -LiteralPath "$routeStatePath.bak" -PathType Leaf) -or
+        @(Get-ChildItem -LiteralPath (Join-Path $routeTestRoot '.route-fix-backups') -Recurse -File).Count -lt 1) {
+        throw 'Remote task route apply test did not create its recovery files.'
+    }
+    Write-Host 'PASS remote task Windows route dry-run, apply, validation, and backup test'
+}
+finally {
+    if (Test-Path -LiteralPath $routeTestRoot) {
+        Remove-Item -LiteralPath $routeTestRoot -Recurse -Force
     }
 }
 
@@ -192,3 +341,4 @@ Write-Host ("PASS verified {0} expected project files" -f $expectedFiles.Count)
 Write-Host 'PASS compiled CodexMover.Native.cs'
 Write-Host 'PASS machine-specific value scan'
 Write-Host 'PASS Codex AppX system-volume guard'
+Write-Host 'PASS remote task Windows route guard'

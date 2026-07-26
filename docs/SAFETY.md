@@ -66,6 +66,9 @@ Windows Junction/ReparsePoint 让原路径继续可用，但数据物理上位�
 - 原 C 盘目录先改名为备份，再建立 Junction；运行验收脚本前不要删除备份。
 - OpenAI.Codex AppX/MSIX 程序包必须直接保留在 Windows 系统盘。迁移器检测到包根 ReparsePoint 或非系统卷位置时会停止；不要用 `Move-AppxPackage`、自建 AppX volume 或手工 Junction 绕过检查。
 - 只验证 AppX 文件存在、Junction 目标或可执行文件 ID 不足以证明插件健康；跨盘受保护资源可能在 bundled plugin staging 阶段才失败。
+- 单个 SSH task 的内部迁移必须备份源/目标 SQLite、session index 和 rollout；先验证目标 `thread/read`，再移除源记录。
+- 修复 `.codex-global-state.json` 前必须退出所有 Windows Session 中的 Codex Desktop。运行中的 Electron 会把旧 Host/project 路由写回文件。
+- `Repair-CodexRemoteThreadRoute.ps1` 只修 Windows 路由，不会移动或恢复远端 rollout；默认预览，确认目标 remote project 后才使用 `-Apply`。
 - `Remove-CodexSidecarUser.ps1` 删除的是独立 Windows 账户，不是普通 `.codex` 文件夹；它要求精确 SID，并且不会创建备份。
 
 ## 凭据与外部模型
