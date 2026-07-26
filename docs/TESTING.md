@@ -2,13 +2,14 @@
 
 > [返回项目首页](../README.md) · [文档索引](./README.md)
 
-测试应从仓库根目录运行。三个测试套件均使用临时或隔离数据，不会修改真实下载目录、浏览器缓存或 Codex 数据。
+测试应从仓库根目录运行。所有测试套件均使用临时或隔离数据，不会修改真实下载目录、浏览器缓存或 Codex 数据。
 
 ## 前置条件
 
-- Windows 10/11。
+- Windows 10/11 用于三个 Windows 子项目的完整验证。
 - PowerShell 7 用于日常开发；Windows PowerShell 5.1 用于兼容性验证。
 - Python 3.11+ 用于 Folder Organizer。
+- Linux 与 Python 3.10+ 用于 Linux Codex 单任务迁移。
 - Git 工作区应在测试前后保持干净。
 
 ## Folder Organizer
@@ -57,6 +58,26 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 ```
 
 测试会解析 PowerShell 文件、编译 Win32 C# 辅助器、检查机器专用标识、验证 Robocopy union/mirror 行为，并确认删除逻辑不会跟随 Junction。测试还会强制 AppX `keep_system_volume` 策略，并禁止 AppX 迁移命令重新进入 Codex Mover。PowerShell 7 还覆盖超长路径场景。
+
+## Linux Codex 单任务迁移
+
+在 Linux 上运行：
+
+```bash
+python3 -m unittest discover \
+  -s codex-mover/linux-session-mover/tests \
+  -v
+```
+
+测试覆盖：
+
+- dry run 不建立 lock、备份、目标 rollout、SQLite row 或索引。
+- active 与 archived 两种 rollout 布局。
+- 目标 `sessions` 为外置数据盘 symlink 时，SQLite 仍保存逻辑 `CODEX_HOME` 路径。
+- 同时更新 SQLite cwd 和 rollout 结构化 cwd，但不替换历史消息中的旧路径文本。
+- 目标冲突默认拒绝、源 rollout 保留、失败后回滚、备份 manifest 和 SQLite schema 差异处理。
+
+测试只创建临时 home、SQLite 和伪造 JSONL，不读取当前用户的 `~/.codex`。
 
 ## 提交前检查
 

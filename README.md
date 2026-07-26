@@ -1,6 +1,6 @@
 # Organize Your Windows
 
-一组面向 Windows 10/11 的安全型整理与迁移工具，覆盖下载目录整理、应用缓存搬家，以及 Codex Desktop 数据迁移。
+一组以 Windows 10/11 为主、包含 Linux Codex task 迁移辅助工具的安全型整理与迁移项目，覆盖下载目录整理、应用缓存搬家，以及 Codex Desktop/Codex SSH 状态迁移。
 
 这些工具会处理真实文件。默认流程强调“先盘点、再预览、显式执行、立即验证、保留回滚”，但不同子项目的风险边界并不相同。运行任何写操作前，请先阅读对应 README 和[共享安全指南](./docs/SAFETY.md)。
 
@@ -10,13 +10,14 @@
 | --- | --- | --- | --- |
 | [Folder Organizer](./folder-organizer/) | 下载目录杂乱、重复文件、旧安装包、文档分类和本地检索 | 生成只读计划 | `apply --confirm APPLY` 才移动文件；写入 rollback 清单，可 `undo` |
 | [Windows Cache Mover](./windows-cache-mover/) | Chrome（含 Beta）、Brave、Edge 与开发工具缓存持续占用 C 盘 | 审计或预览 | `-Apply` 后复制/建立 Junction；JSON 清单支持验证与恢复 |
-| [Codex Mover](./codex-mover/) | Windows Codex 的 `.codex`、运行时缓存和本地数据占用 C 盘 | 只读盘点与预复制；AppX 留在系统盘 | UAC 收尾器等待 Codex 退出后切换；保留 C 盘备份，验收后再清理 |
+| [Codex Mover](./codex-mover/) | Windows 整体搬走 `.codex`/缓存；或 Linux 在两个 `CODEX_HOME` 间迁移单个 task | Windows 只读盘点与预复制；Linux 只读迁移计划 | Windows 用 UAC/Junction；Linux 备份并复制 rollout、SQLite row 和索引，源端保留 |
 
 ### 应该选择哪个？
 
 - 整理 `Downloads` 或其他普通文件夹：使用 **Folder Organizer**。
 - 搬走可重建的浏览器/开发工具缓存：使用 **Windows Cache Mover**。
 - 搬走 Codex Desktop 的会话、配置、运行时和本地数据：使用 **Codex Mover**；Windows 管理的 AppX 应用包不会迁移。
+- 在 Linux/SSH 下，把一个旧 task 移到另一套 `CODEX_HOME` 或 API Key：使用 [Linux Codex 单任务迁移](./codex-mover/linux-session-mover/)。
 - 清理 `WinSxS`、`DriverStore`、Windows Installer、Defender、Windows Update、整份 `AppData`：这些不属于本仓库支持范围，请使用 Windows 或软件自身的维护方式。
 
 ## 共同设计原则
@@ -26,7 +27,7 @@
 3. **范围固定**：目标必须位于声明的根目录；不跟随未知 Junction/ReparsePoint。
 4. **可验证**：使用哈希、文件 ID、清单或状态文件确认结果。
 5. **可恢复**：能回滚的操作会保留源数据、备份或 rollback manifest。
-6. **秘密最小化**：报告不收集浏览器凭据；Codex 凭据只作为不透明文件迁移，不会写入日志或仓库。
+6. **秘密最小化**：报告不收集浏览器凭据；Windows 整体搬盘只把 Codex 凭据视为不透明文件，Linux 单 task 迁移完全不复制认证；秘密不会写入日志或仓库。
 
 更完整的操作前检查、风险分级与恢复顺序见 [docs/SAFETY.md](./docs/SAFETY.md)。
 
@@ -80,13 +81,28 @@ Pop-Location
 
 迁移当前活跃任务时，需要仔细遵循 UAC 收尾和重启验收流程，详见 [codex-mover/README.md](./codex-mover/README.md)。
 
+### Linux Codex task：先生成迁移计划
+
+需要 Python 3.10 或更新版本。以下命令默认只读：
+
+```bash
+python3 codex-mover/linux-session-mover/scripts/migrate_codex_session.py \
+  --source-home "$HOME/.codex" \
+  --target-home "$HOME/.codex-accounts/<account>" \
+  --thread-id "<task-uuid>" \
+  --destination-cwd "/absolute/project/path"
+```
+
+完整的停机、apply、目标 app-server 重启、逻辑/物理 rollout 路径和恢复说明见 [Linux Codex 单任务迁移](./codex-mover/linux-session-mover/)。
+
 ## 环境要求
 
-| 项目 | Windows | PowerShell | 其他要求 |
+| 项目 | 平台 | PowerShell | 其他要求 |
 | --- | --- | --- | --- |
 | Folder Organizer | Windows 10/11 | 用于示例命令 | Python 3.11+；安装 `pypdf` 依赖 |
 | Windows Cache Mover | Windows 10/11 | 5.1 或 7+ | 本机健康 NTFS 目标卷；迁移前退出相关应用 |
 | Codex Mover | Windows 10/11 | 5.1 或 7+ | 本机 NTFS 目标卷、足够空间、可确认 UAC |
+| Linux Codex 单任务迁移 | Linux | 不需要 | Python 3.10+；源/目标 Codex 停止；目标空间足够 |
 
 管理员权限并非所有命令都需要。Codex 的最终目录切换和 sidecar 用户删除必须在提升权限后完成；普通盘点和大多数预览命令应在普通用户权限下运行。Codex AppX 固定保留在系统盘。
 
@@ -98,7 +114,9 @@ Oragnize_Your_Windows/
 ├── docs/                         共享安全与测试文档
 ├── folder-organizer/             Python 文件整理与本地索引
 ├── windows-cache-mover/          PowerShell 缓存审计与 Junction 迁移
-└── codex-mover/                  PowerShell/C# Codex 数据迁移与 AppX 位置保护
+└── codex-mover/                  Codex 数据迁移
+    ├── scripts、src、tests       Windows PowerShell/C# 整体搬盘
+    └── linux-session-mover/      Linux 单 task rollout/SQLite/索引迁移
 ```
 
 ## 测试
@@ -119,6 +137,13 @@ Pop-Location
 .\codex-mover\tests\Invoke-StaticChecks.ps1
 ```
 
+```bash
+# Linux Codex 单任务迁移
+python3 -m unittest discover \
+  -s codex-mover/linux-session-mover/tests \
+  -v
+```
+
 Windows PowerShell 5.1 的兼容性命令和预期结果见 [docs/TESTING.md](./docs/TESTING.md)。
 
 ## 文档
@@ -128,6 +153,7 @@ Windows PowerShell 5.1 的兼容性命令和预期结果见 [docs/TESTING.md](./
 - [开发与测试指南](./docs/TESTING.md)
 - [Codex Mover 故障排查](./codex-mover/docs/TROUBLESHOOTING.md)
 - [Codex AppX 迁盘导致插件失效的事故记录](./codex-mover/docs/APPX-PLUGIN-INCIDENT.md)
+- [Linux Codex 单任务迁移](./codex-mover/linux-session-mover/)
 
 ## 非目标
 

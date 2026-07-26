@@ -68,6 +68,20 @@ Windows Junction/ReparsePoint 让原路径继续可用，但数据物理上位�
 - 只验证 AppX 文件存在、Junction 目标或可执行文件 ID 不足以证明插件健康；跨盘受保护资源可能在 bundled plugin staging 阶段才失败。
 - `Remove-CodexSidecarUser.ps1` 删除的是独立 Windows 账户，不是普通 `.codex` 文件夹；它要求精确 SID，并且不会创建备份。
 
+### Linux Codex 单任务迁移
+
+- `state_5.sqlite`、`threads`、rollout JSONL 和 `session_index.jsonl` 是当前实测的内部布局，不是公开稳定迁移 API；Codex 升级后先在临时 `CODEX_HOME` 验证。
+- 不带 `--apply` 时只能生成计划；正式写入还要求 `--confirm-codex-stopped`，并会再次检查源/目标 Codex 进程。
+- 不要在正被迁移的 task 内执行 apply。使用独立 SSH/终端，断开 Desktop 连接并停止两端 app-server 后再写入。
+- 目标 SQLite 的 `rollout_path` 必须保留在目标逻辑 `CODEX_HOME/sessions/...` 或 `CODEX_HOME/archived_sessions/...` 下；不要写入 symlink 解析后的物理数据盘路径。
+- 项目路径变化时，只改 SQLite cwd 不够；应只改 rollout 中 `session_meta` / `turn_context` 的结构化 cwd，不替换历史消息里的文本。
+- 默认保留源 task；不要在目标成功 resume、产生新一轮记录并重启复验前清理源 rollout 或迁移备份。
+- 同一 task 的源/目标副本迁移后会独立增长，不存在自动合并；不要同时从两套 `CODEX_HOME` 继续写同一 ID。
+- 两套隔离 `CODEX_HOME` 不应通过 symlink 共用同一个 task rollout；脚本检测到源/目标为同一物理文件时会停止。
+- `sessions` 和 `archived_sessions` 应位于同一文件系统，否则 archive/unarchive 的 rename 可能触发 `EXDEV`。
+- 只允许 `sessions` / `archived_sessions` 根目录本身指向数据盘；年月日子目录中的嵌套 symlink、symlink rollout 和 symlink session index 会被拒绝。
+- 迁移脚本不会复制 `auth.json` 或 API Key；目标 task 使用目标 `CODEX_HOME` 当前认证。
+
 ## 凭据与外部模型
 
 - 不要把 `auth.json`、浏览器资料、token、Cookie 或带秘密的本机配置提交到仓库。
