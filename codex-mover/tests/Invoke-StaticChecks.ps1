@@ -17,7 +17,10 @@ $expectedFiles = @(
     'scripts\Test-CodexMigration.ps1',
     'scripts\Remove-CodexMigrationBackups.ps1',
     'scripts\Remove-CodexSidecarUser.ps1',
-    'scripts\Repair-CodexRemoteThreadRoute.ps1'
+    'scripts\Repair-CodexRemoteThreadRoute.ps1',
+    'linux-session-mover\README.md',
+    'linux-session-mover\scripts\migrate_codex_session.py',
+    'linux-session-mover\tests\test_migrate_codex_session.py'
 )
 
 foreach ($relativePath in $expectedFiles) {
@@ -41,7 +44,7 @@ if ($parseFailures.Count -gt 0) {
     throw "PowerShell parser failures:`n$($parseFailures -join "`n")"
 }
 
-$codeFiles = @(Get-ChildItem -LiteralPath $projectRoot -Recurse -File | Where-Object { $_.Extension -in @('.ps1', '.psm1', '.cs') })
+$codeFiles = @(Get-ChildItem -LiteralPath $projectRoot -Recurse -File | Where-Object { $_.Extension -in @('.ps1', '.psm1', '.cs', '.py') })
 $forbiddenPatterns = @(
     '(?i)C:\\Users\\[A-Za-z0-9._-]+',
     '(?i)S-1-5-21-(\d+-){3}\d+',

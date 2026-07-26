@@ -2,11 +2,23 @@
 
 > [返回项目总览](../README.md) · [共享安全指南](../docs/SAFETY.md) · [测试指南](../docs/TESTING.md)
 
-将 Windows Codex Desktop 占用的主要磁盘空间迁移到其他 NTFS 磁盘，同时保留 Codex 仍然期望存在的原始 C 盘路径。
+本目录包含两类边界不同的 Codex 迁移工具：
+
+- **Windows 整体搬盘**：将 Codex Desktop 占用的主要磁盘空间迁移到其他 NTFS 磁盘，同时保留 Codex 仍然期望存在的原始 C 盘路径。
+- **Linux 单 task 迁移**：在两个 `CODEX_HOME` 之间复制一个 task 的 rollout、SQLite row 和 session index，保留原 ID 与完整历史。
 
 本项目来源于一次真实迁移：活跃 Codex 对话不能中断或丢失；`.codex`、运行时缓存和 Local OpenAI 数据可以迁移，但 AppX 程序包必须留在系统盘；Windows 和磁盘分析工具还会把 Junction 的目标误显示在 C 盘下面。
 
-## 会迁移什么
+## 平台入口
+
+| 场景 | 使用入口 | 风险边界 |
+| --- | --- | --- |
+| Windows C 盘空间不足，需要整体迁移当前用户 Codex 数据 | 继续阅读本页 | UAC 收尾、Junction、AppX 固定留在系统盘 |
+| Linux/SSH 下只迁移一个 task 到另一套 `CODEX_HOME`/API Key | [Linux Codex 单任务迁移](./linux-session-mover/) | Codex 停止后复制 rollout、SQLite row、索引；源端保留 |
+
+不要把两套命令混用。Linux 工具不会搬 Windows AppX、运行时缓存或整套认证；Windows 工具也不会把一个 task 合并进另一个 `CODEX_HOME`。
+
+## Windows：会迁移什么
 
 | 逻辑路径 | 默认物理目标 |
 | --- | --- |
@@ -18,7 +30,7 @@
 
 前三个可迁移路径会变成 Junction。AppX 程序包不会创建跨盘 Junction；这是为了避免 bundled plugin 资源复制失败并导致 Chrome 扩展缺少 app-server `nodePath`。完整事故原因见 [AppX 插件故障记录](./docs/APPX-PLUGIN-INCIDENT.md)。
 
-## 推荐流程
+## Windows：推荐流程
 
 在普通 PowerShell 中运行：
 
@@ -56,7 +68,7 @@ UAC 窗口出现后：
     -Confirm:$false
 ```
 
-## 活跃任务保护
+## Windows：活跃任务保护
 
 `-CurrentThreadId` 用于锁定当前 JSONL 会话文件。收尾脚本会在 Codex 完全退出后，对 C 源文件和 E 目标文件做 SHA-256 校验；切换后，验证脚本还会比较 C/E 逻辑路径的文件 ID，确认它们是同一个 E 盘文件。
 
@@ -77,7 +89,7 @@ UAC 窗口出现后：
 
 确认 host、project ID 与 path 后，追加 `-Apply`。脚本会备份 `.codex-global-state.json` 及其 `.bak`，并统一 assignment、workspace、sidebar 与 writable root。完整根因、远端迁移顺序、恢复方法和这次实测代码见 [SSH 远程 Session 迁移后的 Windows Desktop 兼容](./docs/SSH-REMOTE-SESSION-WINDOWS-COMPATIBILITY.md)。
 
-## Sidecar 用户
+## Windows：Sidecar 用户
 
 有些机器还存在名为 `codex` 的独立 Windows 用户配置文件，例如 `C:\Users\codex`。它不是当前用户 `.codex` 目录，也不会随当前用户迁移自动消失。
 
@@ -94,7 +106,7 @@ UAC 窗口出现后：
 
 该操作永久删除用户、配置文件、对应 AppX 注册和明确属于该 SID 的计划任务，不会创建备份。
 
-## 安全设计
+## Windows：安全设计
 
 - 最终路径切换必须在 UAC 管理员窗口中执行。
 - 收尾脚本等待 Codex 核心进程完全退出；若同步期间进程重新出现，会再次等待并重新同步。
@@ -109,7 +121,7 @@ UAC 窗口出现后：
 
 更多已知问题见 [故障排查](./docs/TROUBLESHOOTING.md)；迁移器为何不再移动 AppX 见 [事故记录与设计决策](./docs/APPX-PLUGIN-INCIDENT.md)；SSH 任务迁移后 Windows 客户端为何仍访问旧 Host 见 [远程 Session 兼容说明](./docs/SSH-REMOTE-SESSION-WINDOWS-COMPATIBILITY.md)。
 
-## 要求
+## Windows：要求
 
 - Windows 10/11
 - Windows PowerShell 5.1 或 PowerShell 7
@@ -126,3 +138,11 @@ UAC 窗口出现后：
 ```
 
 静态测试会解析全部 PowerShell 文件、编译 Win32 辅助代码，并检查是否意外写入机器专用用户名或任务 ID。
+
+Linux 单 task 迁移测试使用 Python 临时目录，不会读取真实 `CODEX_HOME`：
+
+```bash
+python3 -m unittest discover \
+  -s codex-mover/linux-session-mover/tests \
+  -v
+```

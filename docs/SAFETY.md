@@ -66,10 +66,26 @@ Windows Junction/ReparsePoint 让原路径继续可用，但数据物理上位�
 - 原 C 盘目录先改名为备份，再建立 Junction；运行验收脚本前不要删除备份。
 - OpenAI.Codex AppX/MSIX 程序包必须直接保留在 Windows 系统盘。迁移器检测到包根 ReparsePoint 或非系统卷位置时会停止；不要用 `Move-AppxPackage`、自建 AppX volume 或手工 Junction 绕过检查。
 - 只验证 AppX 文件存在、Junction 目标或可执行文件 ID 不足以证明插件健康；跨盘受保护资源可能在 bundled plugin staging 阶段才失败。
-- 单个 SSH task 的内部迁移必须备份源/目标 SQLite、session index 和 rollout；先验证目标 `thread/read`，再移除源记录。
+- 单个 SSH task 的内部迁移必须备份源/目标 SQLite、session index 和 rollout；目标 Host 完成真实 `thread/read`、`thread/resume`、写入一轮并重启复验前，不移除源记录。
 - 修复 `.codex-global-state.json` 前必须退出所有 Windows Session 中的 Codex Desktop。运行中的 Electron 会把旧 Host/project 路由写回文件。
 - `Repair-CodexRemoteThreadRoute.ps1` 只修 Windows 路由，不会移动或恢复远端 rollout；默认预览，确认目标 remote project 后才使用 `-Apply`。
 - `Remove-CodexSidecarUser.ps1` 删除的是独立 Windows 账户，不是普通 `.codex` 文件夹；它要求精确 SID，并且不会创建备份。
+
+### Linux Codex 单任务迁移
+
+- `state_5.sqlite`、`threads`、rollout JSONL 和 `session_index.jsonl` 是当前实测的内部布局，不是公开稳定迁移 API；Codex 升级后先在临时 `CODEX_HOME` 验证。
+- 不带 `--apply` 时只能生成计划；正式写入还要求 `--confirm-codex-stopped`，并会再次检查源/目标 Codex 进程。
+- 不要在正被迁移的 task 内执行 apply。使用独立 SSH/终端，断开 Desktop 连接并停止两端 app-server 后再写入。
+- 目标 SQLite 的 `rollout_path` 必须保留在目标逻辑 `CODEX_HOME/sessions/...` 或 `CODEX_HOME/archived_sessions/...` 下；不要写入 symlink 解析后的物理数据盘路径。
+- 项目路径变化时，只改 SQLite cwd 不够；应只改 rollout 中 `session_meta` / `turn_context` 的结构化 cwd，不替换历史消息里的文本。
+- Provider 内部名称变化时，必须同时对齐 SQLite `threads.model_provider` 和所有 `session_meta.payload.model_provider`；名称按目标端原生 task 的实际值及大小写传入。
+- 大型 rollout 可以包含多条同 ID `session_meta`；应逐条验证和改写，不能假定全文件只有一条。
+- 默认保留源 task；不要在目标成功 resume、产生新一轮记录并重启复验前清理源 rollout 或迁移备份。
+- 同一 task 的源/目标副本迁移后会独立增长，不存在自动合并；不要同时从两套 `CODEX_HOME` 继续写同一 ID。
+- 两套隔离 `CODEX_HOME` 不应通过 symlink 共用同一个 task rollout；脚本检测到源/目标为同一物理文件时会停止。
+- `sessions` 和 `archived_sessions` 应位于同一文件系统，否则 archive/unarchive 的 rename 可能触发 `EXDEV`。
+- 只允许 `sessions` / `archived_sessions` 根目录本身指向数据盘；年月日子目录中的嵌套 symlink、symlink rollout 和 symlink session index 会被拒绝。
+- 迁移脚本不会复制 `auth.json` 或 API Key；目标 task 使用目标 `CODEX_HOME` 当前认证。
 
 ## 凭据与外部模型
 

@@ -1,6 +1,6 @@
 # SSH 远程 Session 迁移后的 Windows Desktop 兼容
 
-> [返回 Codex Mover](../README.md) · [故障排查](./TROUBLESHOOTING.md) · [共享安全指南](../../docs/SAFETY.md)
+> [返回 Codex Mover](../README.md) · [Linux 单 task 迁移](../linux-session-mover/) · [故障排查](./TROUBLESHOOTING.md) · [共享安全指南](../../docs/SAFETY.md)
 
 ## 结论
 
@@ -35,7 +35,7 @@ rollout JSONL、`state_5.sqlite` 和 Windows 全局状态都属于 Codex 内部�
 
 - 让源端和目标端使用相同 Codex 版本。
 - 备份两边完整 `CODEX_HOME` 或至少 SQLite、session index 和目标 rollout。
-- 先复制、校验和读取，最后才移除源索引与源文件。
+- 先复制和校验；目标 Host 完成真实 `thread/resume`、写入一轮并重启复验前，不移除源索引与源文件。
 - 若字段或文件名与本文不同，停止写入并重新检查当前版本。
 
 ## 两层状态为什么会分离
@@ -73,7 +73,7 @@ Windows task card
 
 ### 1. 先完成 Linux 远端迁移
 
-停止会写入该任务的源/目标 app-server 后，再处理下列内容：
+优先使用仓库内默认 dry-run 的 [Linux Codex 单任务迁移器](../linux-session-mover/)，不要再把现场一次性修复命令散落成无校验脚本。停止会写入该任务的源/目标 app-server 后，再处理下列内容：
 
 1. 用 SQLite backup API 备份源、目标 `state_5.sqlite`，不要只复制正在使用的主文件而漏掉 WAL。
 2. 找到 task UUID 对应的 rollout JSONL，复制到目标 `sessions` 存储。
@@ -82,7 +82,7 @@ Windows task card
    - `rollout_path`：目标 `$CODEX_HOME/sessions/...` 下的**逻辑绝对路径**，即使 `sessions` 本身是指向大容量磁盘的软链接。
    - `model_provider`：目标配置中的 provider 名称，包含大小写。
    - `cwd`：目标 SSH project 的真实工作目录。
-5. 若 rollout 的 session/turn metadata 也保存旧 provider 或旧 `cwd`，只在**目标副本**中逐行解析并修改对应字段；不要对数 GB 文件做无边界全文替换，以免改到用户消息或工具输出。
+5. 若 rollout 的 session/turn metadata 也保存旧 provider 或旧 `cwd`，只在**目标副本**中逐行解析并修改对应字段；大型 task 可能有多条同 ID `session_meta`，必须处理全部记录。不要对数 GB 文件做无边界全文替换，以免改到用户消息或工具输出。
 6. 检查当前数据库中所有以 task UUID 为键的表。`thread_dynamic_tools` 等依赖行可能需要迁移；若 `thread_spawn_edges` 显示父/子 task，则应迁移整棵依赖树或明确拒绝单 task 迁移。
 7. 若当前版本使用 `session_index.jsonl`，同步标题索引并避免重复 task UUID；同时检查 rollout 引用的 attachment 是否仍可从目标 `CODEX_HOME` 访问。
 8. 执行 `PRAGMA quick_check`，重启**目标 `CODEX_HOME` 对应的** app-server，再从目标 Host 实际执行 `thread/read` 和 `thread/resume`。同机多账户时不要误杀其他 app-server。

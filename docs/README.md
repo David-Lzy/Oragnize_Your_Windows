@@ -14,6 +14,7 @@
 - [Folder Organizer](../folder-organizer/README.md)：配置、计划、应用、文档分类、索引和撤销。
 - [Windows Cache Mover](../windows-cache-mover/README.md)：支持的缓存、审计、迁移、验证和恢复。
 - [Codex Mover](../codex-mover/README.md)：Codex 活跃任务保护、UAC 收尾、数据迁移、AppX 位置保护和备份清理。
+- [Linux Codex 单任务迁移](../codex-mover/linux-session-mover/)：在两个 `CODEX_HOME` 间复制指定 task 的 rollout、SQLite row 和 session index，并保留原 ID/历史。
 - [Codex Mover 故障排查](../codex-mover/docs/TROUBLESHOOTING.md)：SpaceSniffer、Robocopy、UAC、AppX 和长路径问题。
 - [Codex AppX 插件事故记录](../codex-mover/docs/APPX-PLUGIN-INCIDENT.md)：跨盘 AppX 如何导致 bundled plugin staging 与 Chrome app-server 清单失效，以及项目采用的防复发规则。
 - [SSH 远程 Session 的 Windows 兼容](../codex-mover/docs/SSH-REMOTE-SESSION-WINDOWS-COMPATIBILITY.md)：单 task 迁移的两层状态、`no rollout found` 根因、Desktop 路由修复脚本和恢复步骤。
