@@ -57,7 +57,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
     -File .\codex-mover\tests\Invoke-StaticChecks.ps1
 ```
 
-测试会解析 PowerShell 文件、编译 Win32 C# 辅助器、检查机器专用标识、验证 Robocopy union/mirror 行为，并确认删除逻辑不会跟随 Junction。测试还会强制 AppX `keep_system_volume` 策略，禁止 AppX 迁移命令重新进入 Codex Mover，并检查 SSH task 的 Windows 路由修复器是否覆盖 assignment、workspace、sidebar、备份与 Desktop 进程保护。PowerShell 7 还覆盖超长路径场景。
+测试会解析 PowerShell 文件、编译 Win32 C# 辅助器、检查机器专用标识、验证 Robocopy union/mirror 行为，并确认删除逻辑不会跟随 Junction。测试还会强制 AppX `keep_system_volume` 策略，禁止 AppX 迁移命令重新进入 Codex Mover，并检查 SSH task 的 Windows 路由修复器是否覆盖 assignment、workspace、sidebar、备份与 Desktop 进程保护。路由测试同时覆盖已有路由更新，以及 pinned/global task 缺少 assignment/workspace/writable roots 时的自动创建，并验证 nested cwd 与绝对 runtime root 分离。PowerShell 7 还覆盖超长路径场景。
 
 ## Linux Codex 单任务迁移
 
