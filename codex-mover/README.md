@@ -84,10 +84,11 @@ UAC 窗口出现后：
 .\scripts\Repair-CodexRemoteThreadRoute.ps1 `
     -ThreadId '<task UUID>' `
     -TargetHost '<目标 SSH alias>' `
-    -TargetRemotePath '/srv/projects/personal'
+    -TargetRemotePath '/srv/projects/personal' `
+    -TargetCwd '/srv/projects/personal/site'
 ```
 
-确认 host、project ID 与 path 后，追加 `-Apply`。脚本会备份 `.codex-global-state.json` 及其 `.bak`，并统一 assignment、workspace、sidebar 与 writable root。完整根因、远端迁移顺序、恢复方法和这次实测代码见 [SSH 远程 Session 迁移后的 Windows Desktop 兼容](./docs/SSH-REMOTE-SESSION-WINDOWS-COMPATIBILITY.md)。
+`-TargetRemotePath` 是已保存的 remote project 根；任务实际 cwd 位于其子目录时，用 `-TargetCwd` 单独指定。确认 host、project ID 与两个 path 后，追加 `-Apply`。脚本会备份 `.codex-global-state.json` 及其 `.bak`，并统一创建或更新 assignment、workspace、sidebar 与 writable roots；这也覆盖任务可见但打开时报 `AbsolutePathBuf deserialized without a base path` 的缺路由情况。完整根因、远端迁移顺序、恢复方法和实测代码见 [SSH 远程 Session 迁移后的 Windows Desktop 兼容](./docs/SSH-REMOTE-SESSION-WINDOWS-COMPATIBILITY.md)。
 
 ## Windows：Sidecar 用户
 

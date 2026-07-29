@@ -53,6 +53,14 @@ Codex 运行时 JSONL 会话文件通常被独占写入。这是正常现象。�
 
 仅重启 Desktop 不会自动修正持久 assignment；运行中的 Electron 还会覆盖手工 JSON 修改。先让 Windows 打开一次目标 remote project，再完全关闭所有 Windows Session 中的 Desktop 进程，使用 [Repair-CodexRemoteThreadRoute.ps1](../scripts/Repair-CodexRemoteThreadRoute.ps1) 预览和修复。完整步骤与恢复说明见 [SSH 远程 Session 的 Windows 兼容文档](./SSH-REMOTE-SESSION-WINDOWS-COMPATIBILITY.md)。
 
+如果提示改为：
+
+```text
+Invalid request: AbsolutePathBuf deserialized without a base path
+```
+
+先不要重写或重新复制大型 rollout。这个错误可能在 `thread/resume` 读取历史之前就发生：任务被 pinned/global discovery 找到，但本地没有 assignment、workspace 和 writable roots，Desktop 因而传入空或相对的 `runtimeWorkspaceRoots`。给路由脚本分别传 remote project 根 `-TargetRemotePath` 与任务实际绝对目录 `-TargetCwd`；dry run 若显示 `WorkspaceStateCreated = True`，完全退出所有 Desktop 后再 `-Apply`。脚本会创建缺失字段，并把 runtime/writable roots 保持为绝对路径数组。
+
 ## 清理备份遇到超长路径
 
 Windows PowerShell 5.1 的 `Remove-Item -Recurse` 可能在深层 `node_modules` 路径上失败。不要改用会跟随 Junction 的镜像删除命令。
