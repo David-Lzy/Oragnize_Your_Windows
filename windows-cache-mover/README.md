@@ -2,14 +2,15 @@
 
 > [返回项目总览](../README.md) · [共享安全指南](../docs/SAFETY.md) · [测试指南](../docs/TESTING.md)
 
-面向 Windows 10/11 的缓存审计、清理与迁移工具。它用于解决一种很常见的情况：程序主体已经装在其他磁盘，但浏览器模型、网页缓存、开发工具包缓存和游戏运行数据仍不断写入 C 盘。
+面向 Windows 10/11 的缓存审计、清理与迁移工具。它用于解决一种很常见的情况：程序主体已经装在其他磁盘，但浏览器模型、网页缓存和开发工具包缓存仍不断写入 C 盘。
 
 本项目只处理明确可重建的缓存。它不会把整个 `AppData`、Windows 系统目录或用户资料粗暴搬走。
 
 ## 能做什么
 
 - 审计 Chrome、Chrome Beta、Brave、Edge 的缓存目录、占用、运行状态和既有目录联接。
-- 迁移浏览器普通缓存、代码缓存、GPU 缓存、Service Worker 缓存，以及 Chrome / Chrome Beta 本地优化模型。
+- 默认只迁移 Chrome / Chrome Beta 的本地优化模型；浏览器普通缓存、代码缓存、GPU 缓存、Service Worker 缓存和扩展包缓存默认留在系统盘。
+- 浏览器运行时缓存必须显式选择，并且目标必须能确认是单块 SSD；HDD、RAID、Storage Spaces、虚拟盘和无法识别的介质默认拒绝。
 - 迁移 pip、npm、Conda 包、Hugging Face、PyTorch、uv 缓存，并固化相应用户环境变量。
 - 查找指定目录下的大文件，自动跳过目录联接，避免重复统计目标盘内容。
 - 每次正式迁移生成 JSON 清单，支持验证和回滚。
@@ -35,9 +36,20 @@
 - 目标必须是本机健康的 NTFS 卷
 - 正式迁移前必须退出所选浏览器
 
-目标盘如果离线，已迁移缓存的软件可能无法正常使用缓存。机械硬盘还可能降低首次加载速度。
+目标盘如果离线，已迁移缓存的软件可能无法正常使用缓存。浏览器在冷启动和会话恢复时会并发读取大量运行时缓存；把这些高频路径联接到慢盘或介质类型不明的卷，可能造成启动资源异常、崩溃及扩展被错误标记为损坏，因此它们不再属于默认迁移范围。
 
-少量 Chromium 根级着色器缓存没有列入迁移：浏览器启动时可能删除并重建这些目录，联接不耐久，而且通常占用很小。配置档案内的 GPU 缓存仍在支持范围内。
+少量 Chromium 根级着色器缓存没有列入迁移：浏览器启动时可能删除并重建这些目录，联接不耐久，而且通常占用很小。配置档案内的 GPU 缓存仍可审计，但属于需要显式选择的浏览器运行时缓存。
+
+## 缓存迁移分级
+
+| 类别 | 示例 | 默认迁移 |
+| --- | --- | --- |
+| `BrowserColdModel` | Chrome 本地优化模型 | 是 |
+| `BrowserRestoreHotPath` | `Cache`、`Code Cache`、`GPUCache`、Service Worker 缓存 | 否 |
+| `BrowserPackageCache` | `extensions_crx_cache`、`component_crx_cache` | 否 |
+| `DeveloperCache` | pip、npm、Conda、Hugging Face、PyTorch、uv | `IncludeDeveloper` 开启时 |
+
+审计结果中的 `MigrationClass`、`SelectedForMigration`、`DestinationMediaType` 和 `DestinationConfirmedSSD` 会显示当前选择与介质判断。
 
 ## 快速开始
 
@@ -47,7 +59,7 @@
 
 ```powershell
 .\scripts\Get-CacheReport.ps1 -DestinationRoot 'F:\' |
-    Format-Table Name, Status, GB, RunningProcesses, Source, ActualTarget -AutoSize
+    Format-Table Name, MigrationClass, SelectedForMigration, Status, GB, DestinationMediaType -AutoSize
 ```
 
 快速模式不递归计算大小：
@@ -66,10 +78,29 @@
 
 ### 3. 正式迁移
 
-默认先复制现有缓存，再创建目录联接：
+默认先复制现有缓存，再创建目录联接。下面的命令只会选择浏览器冷模型和开发工具缓存，不会选择浏览器运行时或扩展包缓存：
 
 ```powershell
 .\scripts\Move-Cache.ps1 -DestinationRoot 'F:\' -Apply
+```
+
+只有在确实需要、且目标被识别为单块 SSD 时，才显式包含浏览器运行时缓存：
+
+```powershell
+.\scripts\Move-Cache.ps1 `
+    -DestinationRoot 'E:\' `
+    -IncludeBrowserRuntimeCaches `
+    -Apply
+```
+
+对 HDD、RAID、Storage Spaces、虚拟盘或无法确认介质类型的目标，即使使用上面的开关也会中止。存在双重显式覆盖开关 `-AllowSlowOrUnknownBrowserDestination`，但它会重新引入浏览器冷启动和会话恢复风险，不建议用于日常迁移：
+
+```powershell
+.\scripts\Move-Cache.ps1 `
+    -DestinationRoot 'F:\' `
+    -IncludeBrowserRuntimeCaches `
+    -AllowSlowOrUnknownBrowserDestination `
+    -Apply
 ```
 
 如果确定不需要现有缓存，可清空后建立联接：
@@ -153,6 +184,8 @@ Chrome Beta 在参数中使用名称 `ChromeBeta`，迁移到 `F:\BrowserCache\C
 
 - 迁移目标必须位于指定目标根目录内。
 - 已存在的其他目录联接不会被覆盖。
+- 浏览器会话恢复热路径和扩展包缓存默认不进入迁移选择。
+- 高风险浏览器缓存只允许迁往已确认的单块 SSD；介质判断失败时默认拒绝。
 - 回滚只接受与清单目标完全一致的目录联接。
 - 递归统计和大文件扫描不会跟随重解析点。
 - 不把目标盘上的缓存重复计入 C 盘占用。

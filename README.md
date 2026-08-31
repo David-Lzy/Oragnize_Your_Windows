@@ -9,7 +9,7 @@
 | 子项目 | 适用场景 | 默认行为 | 写操作与恢复 |
 | --- | --- | --- | --- |
 | [Folder Organizer](./folder-organizer/) | 下载目录杂乱、重复文件、旧安装包、文档分类和本地检索 | 生成只读计划 | `apply --confirm APPLY` 才移动文件；写入 rollback 清单，可 `undo` |
-| [Windows Cache Mover](./windows-cache-mover/) | Chrome（含 Beta）、Brave、Edge 与开发工具缓存持续占用 C 盘 | 审计或预览 | `-Apply` 后复制/建立 Junction；JSON 清单支持验证与恢复 |
+| [Windows Cache Mover](./windows-cache-mover/) | Chrome（含 Beta）、Brave、Edge 与开发工具缓存持续占用 C 盘 | 审计或预览；浏览器运行时缓存默认排除 | `-Apply` 后复制/建立 Junction；高风险浏览器缓存另需显式选择和 SSD 校验；JSON 清单支持恢复 |
 | [Codex Mover](./codex-mover/) | Windows 整体搬走 `.codex`/缓存；或 Linux 在两个 `CODEX_HOME` 间迁移单个 task | Windows 只读盘点与预复制；Linux 只读迁移计划 | Windows 用 UAC/Junction；Linux 备份并复制 rollout、SQLite row 和索引，源端保留 |
 
 ### 应该选择哪个？
@@ -102,7 +102,7 @@ python3 codex-mover/linux-session-mover/scripts/migrate_codex_session.py \
 | 项目 | 平台 | PowerShell | 其他要求 |
 | --- | --- | --- | --- |
 | Folder Organizer | Windows 10/11 | 用于示例命令 | Python 3.11+；安装 `pypdf` 依赖 |
-| Windows Cache Mover | Windows 10/11 | 5.1 或 7+ | 本机健康 NTFS 目标卷；迁移前退出相关应用 |
+| Windows Cache Mover | Windows 10/11 | 5.1 或 7+ | 本机健康 NTFS 目标卷；浏览器运行时缓存只允许已确认的单块 SSD；迁移前退出相关应用 |
 | Codex Mover | Windows 10/11 | 5.1 或 7+ | 本机 NTFS 目标卷、足够空间、可确认 UAC |
 | Linux Codex 单任务迁移 | Linux | 不需要 | Python 3.10+；源/目标 Codex 停止；目标空间足够 |
 

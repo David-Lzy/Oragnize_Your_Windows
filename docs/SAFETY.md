@@ -52,6 +52,9 @@ Windows Junction/ReparsePoint 让原路径继续可用，但数据物理上位�
 ### Windows Cache Mover
 
 - 只处理目录清单中明确列出的可重建缓存，不处理整个 `AppData` 或系统目录。
+- 浏览器普通缓存、代码/GPU 缓存、Service Worker 缓存和扩展包缓存参与启动或会话恢复，默认不迁移；普通命令只选择浏览器冷模型和已启用的开发工具缓存。
+- `-IncludeBrowserRuntimeCaches` 是高风险显式选择；目标还必须被确认是单块 SSD。HDD、RAID、Storage Spaces、虚拟盘、多盘映射和介质未知时默认拒绝。
+- `-AllowSlowOrUnknownBrowserDestination` 会绕过介质保护，只能与上述高风险开关组合使用；它可能重新引入浏览器启动资源异常和崩溃风险。
 - 正式迁移前退出相关浏览器；脚本检测到运行进程时会中止。
 - 不带 `-Apply` 时只预览。
 - `-DiscardExisting` 会放弃当前缓存内容，只应在确认缓存可重建时使用。

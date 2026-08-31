@@ -1,6 +1,6 @@
 @{
     RootModule = 'WindowsCacheMover.psm1'
-    ModuleVersion = '0.1.0'
+    ModuleVersion = '0.2.0'
     GUID = 'd982528e-8be3-4da0-9800-a7e7a2b7c19d'
     Author = 'David-Lzy'
     CompanyName = ''
@@ -10,6 +10,7 @@
     FunctionsToExport = @(
         'Get-CacheCatalog',
         'Get-CacheAudit',
+        'Get-DestinationStorageProfile',
         'Invoke-CacheMigration',
         'Test-CacheMigration',
         'Restore-CacheMigration',

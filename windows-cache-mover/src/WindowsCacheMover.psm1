@@ -153,7 +153,9 @@ function New-CacheRecord {
         [string]$Source,
         [string]$Target,
         [string]$ProcessName,
-        [string]$EnvironmentVariable
+        [string]$EnvironmentVariable,
+        [string]$MigrationClass,
+        [bool]$DefaultMigration
     )
     [pscustomobject]@{
         Name = $Name
@@ -162,6 +164,8 @@ function New-CacheRecord {
         Target = Get-NormalizedPath -Path $Target
         ProcessName = $ProcessName
         EnvironmentVariable = $EnvironmentVariable
+        MigrationClass = $MigrationClass
+        DefaultMigration = $DefaultMigration
     }
 }
 
@@ -198,13 +202,13 @@ function Get-CacheCatalog {
         }
     )
     $commonRootCaches = @(
-        'extensions_crx_cache',
-        'component_crx_cache'
+        [pscustomobject]@{ Relative = 'extensions_crx_cache'; MigrationClass = 'BrowserPackageCache'; DefaultMigration = $false },
+        [pscustomobject]@{ Relative = 'component_crx_cache'; MigrationClass = 'BrowserPackageCache'; DefaultMigration = $false }
     )
     $chromeRootCaches = @(
-        'OptGuideOnDeviceModel',
-        'OptGuideOnDeviceClassifierModel',
-        'optimization_guide_model_store'
+        [pscustomobject]@{ Relative = 'OptGuideOnDeviceModel'; MigrationClass = 'BrowserColdModel'; DefaultMigration = $true },
+        [pscustomobject]@{ Relative = 'OptGuideOnDeviceClassifierModel'; MigrationClass = 'BrowserColdModel'; DefaultMigration = $true },
+        [pscustomobject]@{ Relative = 'optimization_guide_model_store'; MigrationClass = 'BrowserColdModel'; DefaultMigration = $true }
     )
     $profileCaches = @(
         'Cache',
@@ -216,7 +220,9 @@ function Get-CacheCatalog {
         'Shared Dictionary',
         'Service Worker\CacheStorage',
         'Service Worker\ScriptCache'
-    )
+    ) | ForEach-Object {
+        [pscustomobject]@{ Relative = $_; MigrationClass = 'BrowserRestoreHotPath'; DefaultMigration = $false }
+    }
 
     $records = New-Object System.Collections.Generic.List[object]
     foreach ($browser in $browserSpecs) {
@@ -228,10 +234,18 @@ function Get-CacheCatalog {
         if ($browser.Name -in @('Chrome', 'ChromeBeta')) {
             $browserRootCaches += $chromeRootCaches
         }
-        foreach ($relative in $browserRootCaches) {
-            $source = Join-Path $browser.Root $relative
+        foreach ($cacheSpec in $browserRootCaches) {
+            $source = Join-Path $browser.Root $cacheSpec.Relative
             if ($IncludeMissing -or (Test-Path -LiteralPath $source)) {
-                $records.Add((New-CacheRecord -Name "$($browser.Name):$relative" -Kind 'Browser' -Source $source -Target (Join-Path $browserTarget $relative) -ProcessName $browser.ProcessName -EnvironmentVariable ''))
+                $records.Add((New-CacheRecord `
+                    -Name "$($browser.Name):$($cacheSpec.Relative)" `
+                    -Kind 'Browser' `
+                    -Source $source `
+                    -Target (Join-Path $browserTarget $cacheSpec.Relative) `
+                    -ProcessName $browser.ProcessName `
+                    -EnvironmentVariable '' `
+                    -MigrationClass $cacheSpec.MigrationClass `
+                    -DefaultMigration $cacheSpec.DefaultMigration))
             }
         }
 
@@ -244,11 +258,19 @@ function Get-CacheCatalog {
             $profiles = @([pscustomobject]@{ Name = 'Default'; FullName = Join-Path $browser.Root 'Default' })
         }
         foreach ($profile in $profiles) {
-            foreach ($relative in $profileCaches) {
-                $source = Join-Path $profile.FullName $relative
+            foreach ($cacheSpec in $profileCaches) {
+                $source = Join-Path $profile.FullName $cacheSpec.Relative
                 if ($IncludeMissing -or (Test-Path -LiteralPath $source)) {
-                    $target = Join-Path (Join-Path $browserTarget $profile.Name) $relative
-                    $records.Add((New-CacheRecord -Name "$($browser.Name):$($profile.Name):$relative" -Kind 'Browser' -Source $source -Target $target -ProcessName $browser.ProcessName -EnvironmentVariable ''))
+                    $target = Join-Path (Join-Path $browserTarget $profile.Name) $cacheSpec.Relative
+                    $records.Add((New-CacheRecord `
+                        -Name "$($browser.Name):$($profile.Name):$($cacheSpec.Relative)" `
+                        -Kind 'Browser' `
+                        -Source $source `
+                        -Target $target `
+                        -ProcessName $browser.ProcessName `
+                        -EnvironmentVariable '' `
+                        -MigrationClass $cacheSpec.MigrationClass `
+                        -DefaultMigration $cacheSpec.DefaultMigration))
                 }
             }
         }
@@ -265,11 +287,37 @@ function Get-CacheCatalog {
     )
     foreach ($cache in $developerCaches) {
         if ($IncludeMissing -or (Test-Path -LiteralPath $cache.Source)) {
-            $records.Add((New-CacheRecord -Name $cache.Name -Kind 'Developer' -Source $cache.Source -Target (Join-Path $destination $cache.Target) -ProcessName '' -EnvironmentVariable $cache.Variable))
+            $records.Add((New-CacheRecord `
+                -Name $cache.Name `
+                -Kind 'Developer' `
+                -Source $cache.Source `
+                -Target (Join-Path $destination $cache.Target) `
+                -ProcessName '' `
+                -EnvironmentVariable $cache.Variable `
+                -MigrationClass 'DeveloperCache' `
+                -DefaultMigration $true))
         }
     }
 
     return $records.ToArray()
+}
+
+function Select-CacheMigrationRecords {
+    param(
+        [Parameter(Mandatory)][object[]]$Catalog,
+        [string[]]$Browser,
+        [bool]$IncludeDeveloper,
+        [bool]$IncludeBrowserRuntimeCaches
+    )
+
+    return @($Catalog | Where-Object {
+        if ($_.Kind -eq 'Browser') {
+            $browserSelected = $Browser -contains ($_.Name -split ':')[0]
+            $browserSelected -and ($_.DefaultMigration -or $IncludeBrowserRuntimeCaches)
+        } else {
+            $_.Kind -eq 'Developer' -and $IncludeDeveloper
+        }
+    })
 }
 
 function Get-CacheAudit {
@@ -278,12 +326,14 @@ function Get-CacheAudit {
         [Parameter(Mandatory)][string]$DestinationRoot,
         [string[]]$Browser = @('Chrome', 'ChromeBeta', 'Brave', 'Edge'),
         [switch]$IncludeDeveloper,
+        [switch]$IncludeBrowserRuntimeCaches,
         [switch]$IncludeMissing,
         [switch]$Fast,
         [string]$HomePath = $HOME,
         [string]$LocalAppData = $env:LOCALAPPDATA
     )
 
+    $destinationStorage = Get-DestinationStorageProfile -DestinationRoot $DestinationRoot
     $catalog = Get-CacheCatalog -DestinationRoot $DestinationRoot -HomePath $HomePath -LocalAppData $LocalAppData -IncludeMissing:$IncludeMissing
     foreach ($record in $catalog) {
         if ($record.Kind -eq 'Browser' -and $Browser -notcontains ($record.Name -split ':')[0]) {
@@ -329,6 +379,9 @@ function Get-CacheAudit {
         [pscustomobject]@{
             Name = $record.Name
             Kind = $record.Kind
+            MigrationClass = $record.MigrationClass
+            DefaultMigration = $record.DefaultMigration
+            SelectedForMigration = [bool]($record.Kind -eq 'Developer' -or $record.DefaultMigration -or $IncludeBrowserRuntimeCaches)
             Status = $status
             GB = [math]::Round($stats.Bytes / 1GB, 3)
             Files = $stats.Files
@@ -338,6 +391,8 @@ function Get-CacheAudit {
             Target = $record.Target
             ActualTarget = $linkTarget
             EnvironmentVariable = $record.EnvironmentVariable
+            DestinationMediaType = $destinationStorage.MediaType
+            DestinationConfirmedSSD = $destinationStorage.ConfirmedSSD
         }
     }
 }
@@ -352,6 +407,83 @@ function Assert-DestinationVolume {
     $volume = Get-Volume -DriveLetter $driveLetter -ErrorAction Stop
     if ($volume.FileSystem -ne 'NTFS' -or $volume.HealthStatus -ne 'Healthy') {
         throw "Destination volume must be healthy NTFS: $root"
+    }
+}
+
+function Get-DestinationStorageProfile {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$DestinationRoot)
+
+    Assert-DestinationVolume -DestinationRoot $DestinationRoot
+    $root = [System.IO.Path]::GetPathRoot((Get-NormalizedPath -Path $DestinationRoot))
+    $driveLetter = $root.Substring(0, 1)
+    $partition = Get-Partition -DriveLetter $driveLetter -ErrorAction SilentlyContinue | Select-Object -First 1
+    $disk = $null
+    $physicalDisks = @()
+    if ($null -ne $partition) {
+        $disk = Get-Disk -Number $partition.DiskNumber -ErrorAction SilentlyContinue
+        if ($null -ne $disk) {
+            $physicalDisks = @(Get-PhysicalDisk -ErrorAction SilentlyContinue | Where-Object {
+                [string]$_.DeviceId -eq [string]$disk.Number -or $_.FriendlyName -eq $disk.FriendlyName
+            })
+        }
+    }
+
+    $busType = if ($null -ne $disk) { [string]$disk.BusType } else { 'Unknown' }
+    $reportedMedia = @($physicalDisks | ForEach-Object { [string]$_.MediaType } | Where-Object { $_ -and $_ -ne 'Unspecified' } | Sort-Object -Unique)
+    $ambiguousBusTypes = @('RAID', 'Spaces', 'Virtual', 'iSCSI', 'Unknown')
+    $confirmedSingleSSD = $physicalDisks.Count -eq 1 -and
+        $reportedMedia.Count -eq 1 -and
+        $reportedMedia[0] -eq 'SSD' -and
+        $busType -notin $ambiguousBusTypes
+    $mediaType = if ($confirmedSingleSSD) {
+        'SSD'
+    } elseif ($reportedMedia -contains 'HDD') {
+        'HDD'
+    } else {
+        'Unknown'
+    }
+    $reason = if ($confirmedSingleSSD) {
+        'The destination resolves to one physical disk reporting SSD media.'
+    } elseif ($mediaType -eq 'HDD') {
+        'At least one resolved physical disk reports HDD media.'
+    } elseif ($null -eq $partition) {
+        'The destination volume could not be mapped to a partition; RAID and virtual volumes are treated as unknown.'
+    } elseif ($physicalDisks.Count -eq 0) {
+        'The destination disk could not be mapped to a physical disk with a reliable media type.'
+    } elseif ($busType -in $ambiguousBusTypes -or $physicalDisks.Count -ne 1) {
+        'RAID, Storage Spaces, virtual, iSCSI, and multi-disk destinations are treated as unknown even when an SSD is reported.'
+    } else {
+        'The resolved physical disk media type is unspecified or mixed.'
+    }
+
+    return [pscustomobject]@{
+        DriveLetter = $driveLetter
+        MediaType = $mediaType
+        ConfirmedSSD = [bool]$confirmedSingleSSD
+        BusType = $busType
+        PhysicalDiskCount = $physicalDisks.Count
+        DiskNumber = if ($null -ne $disk) { [int]$disk.Number } else { $null }
+        FriendlyName = if ($null -ne $disk) { [string]$disk.FriendlyName } else { '' }
+        Reason = $reason
+    }
+}
+
+function Assert-BrowserDestinationSafety {
+    param(
+        [Parameter(Mandatory)][object[]]$SelectedRecords,
+        [Parameter(Mandatory)]$DestinationStorage,
+        [Parameter(Mandatory)][string]$Destination,
+        [bool]$AllowSlowOrUnknownBrowserDestination
+    )
+
+    $sensitiveBrowserCaches = @($SelectedRecords | Where-Object {
+        $_.Kind -eq 'Browser' -and -not $_.DefaultMigration
+    })
+    if ($sensitiveBrowserCaches.Count -gt 0 -and
+        -not $DestinationStorage.ConfirmedSSD -and
+        -not $AllowSlowOrUnknownBrowserDestination) {
+        throw "Refusing browser runtime/package cache migration to $Destination because its media type is '$($DestinationStorage.MediaType)'. $($DestinationStorage.Reason) Use a confirmed SSD, or explicitly combine -IncludeBrowserRuntimeCaches with -AllowSlowOrUnknownBrowserDestination after accepting browser startup/session-restore risk."
     }
 }
 
@@ -373,19 +505,31 @@ function Invoke-CacheMigration {
         [Parameter(Mandatory)][string]$DestinationRoot,
         [string[]]$Browser = @('Chrome', 'ChromeBeta', 'Brave', 'Edge'),
         [switch]$IncludeDeveloper,
+        [switch]$IncludeBrowserRuntimeCaches,
+        [switch]$AllowSlowOrUnknownBrowserDestination,
         [switch]$DiscardExisting,
         [string]$HomePath = $HOME,
         [string]$LocalAppData = $env:LOCALAPPDATA,
         [switch]$SkipEnvironmentChanges
     )
 
-    Assert-DestinationVolume -DestinationRoot $DestinationRoot
+    if ($AllowSlowOrUnknownBrowserDestination -and -not $IncludeBrowserRuntimeCaches) {
+        throw '-AllowSlowOrUnknownBrowserDestination requires -IncludeBrowserRuntimeCaches.'
+    }
     $destination = Get-NormalizedPath -Path $DestinationRoot
+    $destinationStorage = Get-DestinationStorageProfile -DestinationRoot $destination
     $catalog = @(Get-CacheCatalog -DestinationRoot $destination -HomePath $HomePath -LocalAppData $LocalAppData -IncludeMissing)
-    $selected = @($catalog | Where-Object {
-        ($_.Kind -eq 'Browser' -and $Browser -contains ($_.Name -split ':')[0]) -or
-        ($_.Kind -eq 'Developer' -and $IncludeDeveloper)
-    })
+    $selected = @(Select-CacheMigrationRecords `
+        -Catalog $catalog `
+        -Browser $Browser `
+        -IncludeDeveloper ([bool]$IncludeDeveloper) `
+        -IncludeBrowserRuntimeCaches ([bool]$IncludeBrowserRuntimeCaches))
+
+    Assert-BrowserDestinationSafety `
+        -SelectedRecords $selected `
+        -DestinationStorage $destinationStorage `
+        -Destination $destination `
+        -AllowSlowOrUnknownBrowserDestination ([bool]$AllowSlowOrUnknownBrowserDestination)
 
     $processes = @($selected.ProcessName | Where-Object { $_ } | Sort-Object -Unique)
     foreach ($processName in $processes) {
@@ -450,6 +594,7 @@ function Invoke-CacheMigration {
             Target = $target
             ProcessName = $record.ProcessName
             EnvironmentVariable = if ($SkipEnvironmentChanges) { '' } else { $record.EnvironmentVariable }
+            MigrationClass = $record.MigrationClass
             PreviousEnvironmentValue = $previousEnvironment
             OriginalBytes = $sourceStats.Bytes
             OriginalFiles = $sourceStats.Files
@@ -458,7 +603,7 @@ function Invoke-CacheMigration {
     }
 
     if ($manifestMappings.Count -eq 0) {
-        return [pscustomobject]@{ Changed = $false; ManifestPath = $null; Mappings = @() }
+        return [pscustomobject]@{ Changed = $false; ManifestPath = $null; Mappings = @(); DestinationStorage = $destinationStorage }
     }
     if ($environmentChanged) {
         Send-EnvironmentChange
@@ -467,15 +612,16 @@ function Invoke-CacheMigration {
     New-Item -ItemType Directory -Path $manifestDirectory -Force | Out-Null
     $manifestPath = Join-Path $manifestDirectory ("manifest-{0}.json" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
     $manifest = [ordered]@{
-        SchemaVersion = 1
+        SchemaVersion = 2
         CreatedAt = (Get-Date).ToString('o')
         ComputerName = $env:COMPUTERNAME
         UserName = [Environment]::UserName
         DestinationRoot = $destination
+        DestinationStorage = $destinationStorage
         Mappings = $manifestMappings.ToArray()
     }
     $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
-    return [pscustomobject]@{ Changed = $true; ManifestPath = $manifestPath; Mappings = $manifestMappings.ToArray() }
+    return [pscustomobject]@{ Changed = $true; ManifestPath = $manifestPath; Mappings = $manifestMappings.ToArray(); DestinationStorage = $destinationStorage }
 }
 
 function Test-CacheMigration {
@@ -589,4 +735,4 @@ function Find-LargeFile {
     return @($matches | Sort-Object GB -Descending | Select-Object -First $Top)
 }
 
-Export-ModuleMember -Function Get-CacheCatalog,Get-CacheAudit,Invoke-CacheMigration,Test-CacheMigration,Restore-CacheMigration,Find-LargeFile
+Export-ModuleMember -Function Get-CacheCatalog,Get-CacheAudit,Get-DestinationStorageProfile,Invoke-CacheMigration,Test-CacheMigration,Restore-CacheMigration,Find-LargeFile
