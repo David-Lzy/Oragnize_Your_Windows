@@ -4,6 +4,8 @@ param(
     [Parameter(Mandatory)][string]$DestinationRoot,
     [string[]]$Browser = @('Chrome', 'ChromeBeta', 'Brave', 'Edge'),
     [bool]$IncludeDeveloper = $true,
+    [switch]$IncludeBrowserRuntimeCaches,
+    [switch]$AllowSlowOrUnknownBrowserDestination,
     [switch]$DiscardExisting,
     [switch]$Apply
 )
@@ -13,7 +15,11 @@ Import-Module $modulePath -Force
 
 if (-not $Apply) {
     Write-Warning 'Read-only preview. Re-run with -Apply to perform the migration.'
-    Get-CacheAudit -DestinationRoot $DestinationRoot -Browser $Browser -IncludeDeveloper:$IncludeDeveloper |
+    Get-CacheAudit `
+        -DestinationRoot $DestinationRoot `
+        -Browser $Browser `
+        -IncludeDeveloper:$IncludeDeveloper `
+        -IncludeBrowserRuntimeCaches:$IncludeBrowserRuntimeCaches |
         Sort-Object GB -Descending
     return
 }
@@ -22,6 +28,8 @@ $result = Invoke-CacheMigration `
     -DestinationRoot $DestinationRoot `
     -Browser $Browser `
     -IncludeDeveloper:$IncludeDeveloper `
+    -IncludeBrowserRuntimeCaches:$IncludeBrowserRuntimeCaches `
+    -AllowSlowOrUnknownBrowserDestination:$AllowSlowOrUnknownBrowserDestination `
     -DiscardExisting:$DiscardExisting `
     -Confirm:$false
 

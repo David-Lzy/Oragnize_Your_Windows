@@ -40,7 +40,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
     -File .\windows-cache-mover\tests\Invoke-SmokeTest.ps1
 ```
 
-成功结果应包含 `Passed = True`，并覆盖目录复制、Junction 建立、验证和复制回滚。
+成功结果应包含 `Passed = True`，并覆盖浏览器缓存安全分级、默认/显式选择、目标介质报告、目录复制、Junction 建立、验证和复制回滚。默认选择必须只包含 `BrowserColdModel`，不得包含 `BrowserRestoreHotPath` 或 `BrowserPackageCache`。
 
 ## Codex Mover
 

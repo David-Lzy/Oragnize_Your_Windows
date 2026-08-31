@@ -4,6 +4,7 @@ param(
     [string]$DestinationRoot = 'F:\',
     [string[]]$Browser = @('Chrome', 'ChromeBeta', 'Brave', 'Edge'),
     [bool]$IncludeDeveloper = $true,
+    [switch]$IncludeBrowserRuntimeCaches,
     [switch]$IncludeMissing,
     [switch]$Fast,
     [string]$JsonPath
@@ -16,6 +17,7 @@ $report = @(Get-CacheAudit `
     -DestinationRoot $DestinationRoot `
     -Browser $Browser `
     -IncludeDeveloper:$IncludeDeveloper `
+    -IncludeBrowserRuntimeCaches:$IncludeBrowserRuntimeCaches `
     -IncludeMissing:$IncludeMissing `
     -Fast:$Fast |
     Sort-Object GB -Descending)

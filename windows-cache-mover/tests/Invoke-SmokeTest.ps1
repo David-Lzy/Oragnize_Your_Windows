@@ -34,8 +34,98 @@ try {
     $expectedChromeBetaTarget = Join-Path $destination 'BrowserCache\ChromeBeta\Default\Cache'
     if ($chromeBetaCache.Count -ne 1 -or
         $chromeBetaCache[0].Source -ine $expectedChromeBetaSource -or
-        $chromeBetaCache[0].Target -ine $expectedChromeBetaTarget) {
+        $chromeBetaCache[0].Target -ine $expectedChromeBetaTarget -or
+        $chromeBetaCache[0].MigrationClass -ne 'BrowserRestoreHotPath' -or
+        $chromeBetaCache[0].DefaultMigration) {
         throw 'The Chrome Beta cache catalog mapping is incorrect.'
+    }
+    $chromeBetaModel = @($catalog | Where-Object Name -eq 'ChromeBeta:OptGuideOnDeviceModel')
+    if ($chromeBetaModel.Count -ne 1 -or
+        $chromeBetaModel[0].MigrationClass -ne 'BrowserColdModel' -or
+        -not $chromeBetaModel[0].DefaultMigration) {
+        throw 'The Chrome Beta cold-model classification is incorrect.'
+    }
+
+    $module = Get-Module WindowsCacheMover
+    $defaultBrowserSelection = @(& $module {
+        param([object[]]$Records)
+        Select-CacheMigrationRecords `
+            -Catalog $Records `
+            -Browser @('ChromeBeta') `
+            -IncludeDeveloper $false `
+            -IncludeBrowserRuntimeCaches $false
+    } $catalog)
+    if ($defaultBrowserSelection.Count -ne 3 -or
+        @($defaultBrowserSelection | Where-Object MigrationClass -ne 'BrowserColdModel').Count -ne 0) {
+        throw 'Default browser selection must contain only Chrome cold-model caches.'
+    }
+
+    $explicitBrowserSelection = @(& $module {
+        param([object[]]$Records)
+        Select-CacheMigrationRecords `
+            -Catalog $Records `
+            -Browser @('ChromeBeta') `
+            -IncludeDeveloper $false `
+            -IncludeBrowserRuntimeCaches $true
+    } $catalog)
+    if (@($explicitBrowserSelection | Where-Object MigrationClass -eq 'BrowserRestoreHotPath').Count -eq 0 -or
+        @($explicitBrowserSelection | Where-Object MigrationClass -eq 'BrowserPackageCache').Count -eq 0) {
+        throw 'Explicit browser runtime selection did not include protected cache classes.'
+    }
+
+    $blockedProfile = [pscustomobject]@{
+        MediaType = 'Unknown'
+        ConfirmedSSD = $false
+        Reason = 'Synthetic fail-closed test profile.'
+    }
+    $destinationBlocked = $false
+    try {
+        & $module {
+            param([object[]]$Records, $Profile)
+            Assert-BrowserDestinationSafety `
+                -SelectedRecords $Records `
+                -DestinationStorage $Profile `
+                -Destination 'X:\' `
+                -AllowSlowOrUnknownBrowserDestination $false
+        } $explicitBrowserSelection $blockedProfile
+    } catch {
+        if ($_.Exception.Message -like 'Refusing browser runtime/package cache migration*') {
+            $destinationBlocked = $true
+        } else {
+            throw
+        }
+    }
+    if (-not $destinationBlocked) {
+        throw 'Unknown browser runtime-cache destinations must fail closed.'
+    }
+    & $module {
+        param([object[]]$Records, $Profile)
+        Assert-BrowserDestinationSafety `
+            -SelectedRecords $Records `
+            -DestinationStorage $Profile `
+            -Destination 'X:\' `
+            -AllowSlowOrUnknownBrowserDestination $true
+    } $explicitBrowserSelection $blockedProfile
+
+    $destinationProfile = Get-DestinationStorageProfile -DestinationRoot $destination
+    foreach ($property in @('MediaType', 'ConfirmedSSD', 'BusType', 'PhysicalDiskCount', 'Reason')) {
+        if ($destinationProfile.PSObject.Properties.Name -notcontains $property) {
+            throw "Destination storage profile is missing '$property'."
+        }
+    }
+
+    $audit = @(Get-CacheAudit `
+        -DestinationRoot $destination `
+        -Browser ChromeBeta `
+        -IncludeMissing `
+        -Fast `
+        -HomePath $homePath `
+        -LocalAppData $localAppData)
+    $hotAudit = @($audit | Where-Object Name -eq 'ChromeBeta:Default:Cache')
+    $modelAudit = @($audit | Where-Object Name -eq 'ChromeBeta:OptGuideOnDeviceModel')
+    if ($hotAudit.Count -ne 1 -or $hotAudit[0].SelectedForMigration -or
+        $modelAudit.Count -ne 1 -or -not $modelAudit[0].SelectedForMigration) {
+        throw 'Audit selection flags do not reflect the safe browser defaults.'
     }
     $largeFileReport = @(Find-LargeFile -Path $homePath -MinimumGB 0.0005 -Top 5 | Where-Object Path -eq $largeFilePath)
     if ($largeFileReport.Count -ne 1 -or
@@ -75,6 +165,8 @@ try {
     [pscustomobject]@{
         Passed = $true
         CatalogRecords = $catalog.Count
+        DefaultBrowserMappings = $defaultBrowserSelection.Count
+        ExplicitBrowserMappings = $explicitBrowserSelection.Count
         MigratedMappings = $migration.Mappings.Count
         RestoredMappings = $restored.Count
     }
