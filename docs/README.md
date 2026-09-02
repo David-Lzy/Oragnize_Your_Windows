@@ -12,7 +12,8 @@
 ## 子项目文档
 
 - [Folder Organizer](../folder-organizer/README.md)：配置、计划、应用、文档分类、索引和撤销。
-- [Windows Cache Mover](../windows-cache-mover/README.md)：支持的缓存、审计、迁移、验证和恢复。
+- [Windows Cache Mover](../windows-cache-mover/README.md)：支持的缓存、审计、迁移、验证、恢复，以及 Chromium 扩展风险和启动健康检查。
+- [Chromium 启动资源风暴排查](../windows-cache-mover/docs/CHROMIUM-STARTUP-RESOURCE-STORM.md)：区分缓存路径问题与扩展事件放大，并用对照重启验证因果。
 - [Codex Mover](../codex-mover/README.md)：Codex 活跃任务保护、UAC 收尾、数据迁移、AppX 位置保护和备份清理。
 - [Linux Codex 单任务迁移](../codex-mover/linux-session-mover/)：在两个 `CODEX_HOME` 间复制指定 task 的 rollout、SQLite row 和 session index，并保留原 ID/历史。
 - [Codex Mover 故障排查](../codex-mover/docs/TROUBLESHOOTING.md)：SpaceSniffer、Robocopy、UAC、AppX 和长路径问题。

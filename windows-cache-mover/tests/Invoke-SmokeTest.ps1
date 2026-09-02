@@ -25,6 +25,76 @@ try {
         $largeFile.Dispose()
     }
 
+    $riskyExtensionId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    $riskyExtensionRoot = Join-Path $localAppData "Google\Chrome\User Data\Default\Extensions\$riskyExtensionId\1.0.0_0"
+    New-Item -ItemType Directory -Path $riskyExtensionRoot -Force | Out-Null
+    [ordered]@{
+        manifest_version = 3
+        name = 'Synthetic risky extension'
+        version = '1.0.0'
+        background = [ordered]@{ service_worker = 'service-worker.js' }
+    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $riskyExtensionRoot 'manifest.json') -Encoding UTF8
+    @'
+chrome.tabs.onUpdated.addListener(function () {
+    chrome.tabs.query({}).then(function (tabs) {
+        tabs.forEach(function (tab) {
+            chrome.action.setIcon({ tabId: tab.id, path: 'icon.png' });
+            chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+        });
+    });
+});
+'@ | Set-Content -LiteralPath (Join-Path $riskyExtensionRoot 'service-worker.js') -Encoding UTF8
+
+    $safeExtensionId = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    $safeExtensionRoot = Join-Path $localAppData "Google\Chrome\User Data\Default\Extensions\$safeExtensionId\1.0.0_0"
+    New-Item -ItemType Directory -Path $safeExtensionRoot -Force | Out-Null
+    [ordered]@{
+        manifest_version = 3
+        name = 'Synthetic safe extension'
+        version = '1.0.0'
+        background = [ordered]@{ service_worker = 'service-worker.js' }
+    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $safeExtensionRoot 'manifest.json') -Encoding UTF8
+    $separatedSignals = "chrome.tabs.onUpdated.addListener(function (tabId) { console.log(tabId); });`n" +
+        ('/* harmless bundle padding */' * 300) +
+        "`nchrome.tabs.query({}); chrome.action.setIcon({ path: 'icon.png' });"
+    $separatedSignals | Set-Content -LiteralPath (Join-Path $safeExtensionRoot 'service-worker.js') -Encoding UTF8
+
+    $extensionRisks = @(Get-ChromiumExtensionRiskReport -Browser Chrome -LocalAppData $localAppData)
+    if ($extensionRisks.Count -ne 1 -or
+        $extensionRisks[0].ExtensionId -ne $riskyExtensionId -or
+        $extensionRisks[0].Rule -ne 'TabUpdateGlobalFanOut' -or
+        $extensionRisks[0].EvidenceSpanCharacters -gt 4096 -or
+        @($extensionRisks[0].Signals).Count -ne 4) {
+        throw 'The Chromium extension fan-out risk scan did not isolate the synthetic risky extension.'
+    }
+
+    $startupHealth = Test-BrowserStartupHealth `
+        -Browser Chrome `
+        -ProcessId $PID `
+        -MonitorSeconds 1 `
+        -SampleMilliseconds 250 `
+        -HandleWarningThreshold 1000000 `
+        -PrivateMemoryWarningMB 100000 `
+        -ConsecutiveWarningSamples 2
+    if (-not $startupHealth.Healthy -or
+        $startupHealth.Status -ne 'Healthy' -or
+        $startupHealth.SampleCount -lt 2) {
+        throw 'The browser startup health sampler failed its synthetic healthy-process test.'
+    }
+    $startupStorm = Test-BrowserStartupHealth `
+        -Browser Chrome `
+        -ProcessId $PID `
+        -MonitorSeconds 1 `
+        -SampleMilliseconds 250 `
+        -HandleWarningThreshold 1 `
+        -PrivateMemoryWarningMB 1 `
+        -ConsecutiveWarningSamples 2
+    if ($startupStorm.Healthy -or
+        $startupStorm.Status -ne 'ResourceStorm' -or
+        $startupStorm.SampleCount -ne 2) {
+        throw 'The browser startup health sampler failed to detect a synthetic resource storm.'
+    }
+
     $catalog = @(Get-CacheCatalog -DestinationRoot $destination -HomePath $homePath -LocalAppData $localAppData -IncludeMissing)
     if (@($catalog | Where-Object Kind -eq 'Developer').Count -ne 7) {
         throw 'The developer cache catalog is incomplete.'
@@ -167,6 +237,9 @@ try {
         CatalogRecords = $catalog.Count
         DefaultBrowserMappings = $defaultBrowserSelection.Count
         ExplicitBrowserMappings = $explicitBrowserSelection.Count
+        ExtensionRisks = $extensionRisks.Count
+        StartupHealthSamples = $startupHealth.SampleCount
+        StartupStormSamples = $startupStorm.SampleCount
         MigratedMappings = $migration.Mappings.Count
         RestoredMappings = $restored.Count
     }

@@ -9,6 +9,8 @@
 ## 能做什么
 
 - 审计 Chrome、Chrome Beta、Brave、Edge 的缓存目录、占用、运行状态和既有目录联接。
+- 只读扫描 Chromium 扩展中的“标签更新事件 → 查询全部标签 → 批量换图标/注入脚本”放大模式。
+- 监控浏览器主进程在冷启动和会话恢复时的句柄、私有内存与进程数，识别资源风暴并保存 JSON 证据。
 - 默认只迁移 Chrome / Chrome Beta 的本地优化模型；浏览器普通缓存、代码缓存、GPU 缓存、Service Worker 缓存和扩展包缓存默认留在系统盘。
 - 浏览器运行时缓存必须显式选择，并且目标必须能确认是单块 SSD；HDD、RAID、Storage Spaces、虚拟盘和无法识别的介质默认拒绝。
 - 迁移 pip、npm、Conda 包、Hugging Face、PyTorch、uv 缓存，并固化相应用户环境变量。
@@ -39,6 +41,33 @@
 目标盘如果离线，已迁移缓存的软件可能无法正常使用缓存。浏览器在冷启动和会话恢复时会并发读取大量运行时缓存；把这些高频路径联接到慢盘或介质类型不明的卷，可能造成启动资源异常、崩溃及扩展被错误标记为损坏，因此它们不再属于默认迁移范围。
 
 少量 Chromium 根级着色器缓存没有列入迁移：浏览器启动时可能删除并重建这些目录，联接不耐久，而且通常占用很小。配置档案内的 GPU 缓存仍可审计，但属于需要显式选择的浏览器运行时缓存。
+
+## Chrome 会话恢复崩溃防复发
+
+浏览器只打开一个崩溃提示页时正常、点击“恢复”后才崩溃，不足以证明迁移过的缓存损坏。大量标签同时恢复也可能把扩展中的全局标签遍历缺陷放大成主进程句柄和内存风暴。
+
+先运行只读扩展风险扫描。它不会加载、修改、禁用或删除扩展：
+
+```powershell
+.\scripts\Get-ChromiumExtensionRiskReport.ps1 `
+    -Browser Chrome `
+    -JsonPath '.\extension-risk.json'
+```
+
+`TabUpdateGlobalFanOut` 表示扫描器在同一脚本不超过 4,096 个字符的局部窗口内发现了 `tabs.onUpdated`、查询全部标签，以及 `setIcon` 或 `executeScript`。报告的风险级别为 `Review`、置信度为 `Heuristic`：它是需要复核的事件放大线索，不是对扩展恶意性或因果关系的自动判决。局部窗口限制用于避免大型打包脚本仅因不同模块分别使用这些 API 而误报。
+
+关闭 Chrome 后先启动监控，再重新打开浏览器并恢复原会话：
+
+```powershell
+.\scripts\Test-BrowserStartupHealth.ps1 `
+    -Browser Chrome `
+    -MonitorSeconds 120 `
+    -JsonPath '.\chrome-startup-health.json'
+```
+
+默认在主进程连续 3 个样本达到 12,000 个句柄或 2,048 MB 私有内存时报告 `ResourceStorm`，但不会结束浏览器。若 Chrome 同时把扩展标成“可能已损坏”，先保留现场并检查风险报告；不要直接点击“修复”，因为修复会重新安装并重新启用同一份问题代码。应先手动禁用嫌疑扩展，重复同样的会话恢复测试并比较报告。
+
+如何进一步用句柄来源区分“迁移路径问题”和“扩展事件放大”，见 [Chromium 启动资源风暴排查](./docs/CHROMIUM-STARTUP-RESOURCE-STORM.md)。
 
 ## 缓存迁移分级
 
@@ -193,7 +222,7 @@ Chrome Beta 在参数中使用名称 `ChromeBeta`，迁移到 `F:\BrowserCache\C
 
 ## 测试
 
-烟雾测试在 `%TEMP%` 下创建隔离目录，覆盖“复制现有缓存 → 建立联接 → 验证 → 复制回滚”，最后清理测试数据：
+烟雾测试在 `%TEMP%` 下创建隔离目录，覆盖扩展风险规则、浏览器进程健康采样，以及“复制现有缓存 → 建立联接 → 验证 → 复制回滚”，最后清理测试数据：
 
 ```powershell
 .\tests\Invoke-SmokeTest.ps1
