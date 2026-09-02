@@ -692,6 +692,381 @@ function Restore-CacheMigration {
     }
 }
 
+function Get-BrowserProcessSpec {
+    param(
+        [Parameter(Mandatory)][ValidateSet('Chrome', 'ChromeBeta', 'Brave', 'Edge')][string]$Browser,
+        [Parameter(Mandatory)][string]$LocalAppData
+    )
+
+    switch ($Browser) {
+        'Chrome' {
+            return [pscustomobject]@{
+                Name = 'Chrome'
+                ProcessName = 'chrome'
+                ExecutableSuffix = '\Google\Chrome\Application\chrome.exe'
+                UserDataRoot = Join-Path $LocalAppData 'Google\Chrome\User Data'
+            }
+        }
+        'ChromeBeta' {
+            return [pscustomobject]@{
+                Name = 'ChromeBeta'
+                ProcessName = 'chrome'
+                ExecutableSuffix = '\Google\Chrome Beta\Application\chrome.exe'
+                UserDataRoot = Join-Path $LocalAppData 'Google\Chrome Beta\User Data'
+            }
+        }
+        'Brave' {
+            return [pscustomobject]@{
+                Name = 'Brave'
+                ProcessName = 'brave'
+                ExecutableSuffix = '\BraveSoftware\Brave-Browser\Application\brave.exe'
+                UserDataRoot = Join-Path $LocalAppData 'BraveSoftware\Brave-Browser\User Data'
+            }
+        }
+        'Edge' {
+            return [pscustomobject]@{
+                Name = 'Edge'
+                ProcessName = 'msedge'
+                ExecutableSuffix = '\Microsoft\Edge\Application\msedge.exe'
+                UserDataRoot = Join-Path $LocalAppData 'Microsoft\Edge\User Data'
+            }
+        }
+    }
+}
+
+function Get-JavaScriptFileWithoutReparsePoint {
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][int64]$MaximumBytes
+    )
+
+    if (-not (Test-Path -LiteralPath $Root -PathType Container)) {
+        return
+    }
+
+    $pending = New-Object 'System.Collections.Generic.Stack[string]'
+    $pending.Push((Get-NormalizedPath -Path $Root))
+    while ($pending.Count -gt 0) {
+        $current = $pending.Pop()
+        try {
+            foreach ($entry in [System.IO.Directory]::EnumerateFileSystemEntries($current)) {
+                try {
+                    $attributes = [System.IO.File]::GetAttributes($entry)
+                    if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                        continue
+                    }
+                    if (($attributes -band [System.IO.FileAttributes]::Directory) -ne 0) {
+                        $pending.Push($entry)
+                        continue
+                    }
+                    if ([System.IO.Path]::GetExtension($entry) -ieq '.js') {
+                        $file = New-Object System.IO.FileInfo($entry)
+                        if ($file.Length -le $MaximumBytes) {
+                            $file
+                        }
+                    }
+                } catch { }
+            }
+        } catch { }
+    }
+}
+
+function Resolve-ChromiumExtensionName {
+    param(
+        [Parameter(Mandatory)]$Manifest,
+        [Parameter(Mandatory)][string]$VersionRoot
+    )
+
+    $name = [string]$Manifest.name
+    if ($name -notmatch '^__MSG_(.+)__$' -or -not $Manifest.default_locale) {
+        return $name
+    }
+
+    $messageKey = $Matches[1]
+    $messagesPath = Join-Path $VersionRoot (Join-Path '_locales' (Join-Path ([string]$Manifest.default_locale) 'messages.json'))
+    if (-not (Test-Path -LiteralPath $messagesPath -PathType Leaf)) {
+        return $name
+    }
+    try {
+        $messages = Get-Content -Raw -LiteralPath $messagesPath | ConvertFrom-Json
+        $property = $messages.PSObject.Properties[$messageKey]
+        if ($null -ne $property -and $property.Value.message) {
+            return [string]$property.Value.message
+        }
+    } catch { }
+    return $name
+}
+
+function Get-MinimumExtensionSignalSpan {
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Content,
+        [Parameter(Mandatory)][string]$OnUpdatedPattern,
+        [Parameter(Mandatory)][string]$AllTabsPattern,
+        [Parameter(Mandatory)][string]$SetIconPattern,
+        [Parameter(Mandatory)][string]$ExecuteScriptPattern
+    )
+
+    $events = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($match in [regex]::Matches($Content, $OnUpdatedPattern)) {
+        $events.Add([pscustomobject]@{ Position = $match.Index; Kind = 'Updated' })
+    }
+    foreach ($match in [regex]::Matches($Content, $AllTabsPattern)) {
+        $events.Add([pscustomobject]@{ Position = $match.Index; Kind = 'AllTabs' })
+    }
+    foreach ($match in [regex]::Matches($Content, $SetIconPattern)) {
+        $events.Add([pscustomobject]@{ Position = $match.Index; Kind = 'SetIcon' })
+    }
+    foreach ($match in [regex]::Matches($Content, $ExecuteScriptPattern)) {
+        $events.Add([pscustomobject]@{ Position = $match.Index; Kind = 'ExecuteScript' })
+    }
+
+    $orderedEvents = @($events.ToArray() | Sort-Object Position)
+    $counts = @{ Updated = 0; AllTabs = 0; SetIcon = 0; ExecuteScript = 0 }
+    $left = 0
+    $best = [int]::MaxValue
+    for ($right = 0; $right -lt $orderedEvents.Count; $right++) {
+        $counts[$orderedEvents[$right].Kind]++
+        while ($counts.Updated -gt 0 -and
+            $counts.AllTabs -gt 0 -and
+            ($counts.SetIcon -gt 0 -or $counts.ExecuteScript -gt 0)) {
+            $span = [int]($orderedEvents[$right].Position - $orderedEvents[$left].Position)
+            if ($span -lt $best) {
+                $best = $span
+            }
+            $counts[$orderedEvents[$left].Kind]--
+            $left++
+        }
+    }
+    if ($best -eq [int]::MaxValue) {
+        return $null
+    }
+    return $best
+}
+
+function Get-ChromiumExtensionRiskReport {
+    [CmdletBinding()]
+    param(
+        [ValidateSet('Chrome', 'ChromeBeta', 'Brave', 'Edge')]
+        [string[]]$Browser = @('Chrome', 'ChromeBeta', 'Brave', 'Edge'),
+        [string]$LocalAppData = $env:LOCALAPPDATA,
+        [ValidateRange(1, 128)][int]$MaximumScriptMB = 16,
+        [ValidateRange(256, 65536)][int]$MaximumSignalSpanCharacters = 4096
+    )
+
+    $onUpdatedPattern = '(?s)(?:chrome|browser)\s*\.\s*tabs\s*\.\s*onUpdated\s*\.\s*addListener'
+    $allTabsPattern = '(?s)(?:chrome|browser)\s*\.\s*tabs\s*\.\s*query\s*\(\s*\{\s*\}'
+    $setIconPattern = '(?s)(?:chrome|browser)\s*\.\s*(?:action|browserAction)\s*\.\s*setIcon'
+    $executeScriptPattern = '(?s)(?:chrome|browser)\s*\.\s*scripting\s*\.\s*executeScript'
+    $maximumBytes = [int64]$MaximumScriptMB * 1MB
+
+    foreach ($browserName in $Browser) {
+        $spec = Get-BrowserProcessSpec -Browser $browserName -LocalAppData $LocalAppData
+        if (-not (Test-Path -LiteralPath $spec.UserDataRoot -PathType Container)) {
+            continue
+        }
+        $profiles = @(Get-ChildItem -LiteralPath $spec.UserDataRoot -Directory -Force -ErrorAction SilentlyContinue |
+            Where-Object {
+                ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0 -and
+                ($_.Name -eq 'Default' -or $_.Name -eq 'Guest Profile' -or $_.Name -like 'Profile *')
+            })
+        foreach ($profile in $profiles) {
+            $extensionsRoot = Join-Path $profile.FullName 'Extensions'
+            if (-not (Test-Path -LiteralPath $extensionsRoot -PathType Container)) {
+                continue
+            }
+            $extensionDirectories = @(Get-ChildItem -LiteralPath $extensionsRoot -Directory -Force -ErrorAction SilentlyContinue |
+                Where-Object { ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0 })
+            foreach ($extensionDirectory in $extensionDirectories) {
+                $versionDirectories = @(Get-ChildItem -LiteralPath $extensionDirectory.FullName -Directory -Force -ErrorAction SilentlyContinue |
+                    Where-Object { ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0 })
+                foreach ($versionDirectory in $versionDirectories) {
+                    $manifestPath = Join-Path $versionDirectory.FullName 'manifest.json'
+                    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+                        continue
+                    }
+                    try {
+                        $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+                    } catch {
+                        continue
+                    }
+                    $extensionName = Resolve-ChromiumExtensionName -Manifest $manifest -VersionRoot $versionDirectory.FullName
+                    foreach ($script in @(Get-JavaScriptFileWithoutReparsePoint -Root $versionDirectory.FullName -MaximumBytes $maximumBytes)) {
+                        try {
+                            $content = [System.IO.File]::ReadAllText($script.FullName)
+                        } catch {
+                            continue
+                        }
+                        $signalSpan = Get-MinimumExtensionSignalSpan `
+                            -Content $content `
+                            -OnUpdatedPattern $onUpdatedPattern `
+                            -AllTabsPattern $allTabsPattern `
+                            -SetIconPattern $setIconPattern `
+                            -ExecuteScriptPattern $executeScriptPattern
+                        if ($null -eq $signalSpan -or $signalSpan -gt $MaximumSignalSpanCharacters) {
+                            continue
+                        }
+                        $hasSetIcon = [regex]::IsMatch($content, $setIconPattern)
+                        $hasExecuteScript = [regex]::IsMatch($content, $executeScriptPattern)
+                        $signals = @('tabs.onUpdated', 'tabs.query({})')
+                        if ($hasSetIcon) { $signals += 'action.setIcon' }
+                        if ($hasExecuteScript) { $signals += 'scripting.executeScript' }
+                        [pscustomobject]@{
+                            Browser = $spec.Name
+                            Profile = $profile.Name
+                            ExtensionId = $extensionDirectory.Name
+                            ExtensionName = $extensionName
+                            Version = [string]$manifest.version
+                            RiskLevel = 'Review'
+                            Confidence = 'Heuristic'
+                            Rule = 'TabUpdateGlobalFanOut'
+                            EvidenceSpanCharacters = $signalSpan
+                            Signals = $signals
+                            ScriptPath = $script.FullName
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+function Find-BrowserMainProcess {
+    param([Parameter(Mandatory)]$Spec)
+
+    $processFileName = "$($Spec.ProcessName).exe"
+    $candidates = @(Get-CimInstance Win32_Process -Filter "Name='$processFileName'" -ErrorAction SilentlyContinue |
+        Where-Object {
+            $isMainProcess = -not $_.CommandLine -or $_.CommandLine -notmatch '(?:^|\s)--type(?:=|\s)'
+            $matchesProduct = -not $_.ExecutablePath -or
+                $_.ExecutablePath.EndsWith($Spec.ExecutableSuffix, [System.StringComparison]::OrdinalIgnoreCase)
+            $isMainProcess -and $matchesProduct
+        } |
+        Sort-Object CreationDate -Descending)
+    return $candidates | Select-Object -First 1
+}
+
+function Test-BrowserStartupHealth {
+    [CmdletBinding()]
+    param(
+        [ValidateSet('Chrome', 'ChromeBeta', 'Brave', 'Edge')][string]$Browser = 'Chrome',
+        [ValidateRange(0, 2147483647)][int]$ProcessId = 0,
+        [ValidateRange(0, 3600)][int]$WaitForStartSeconds = 120,
+        [ValidateRange(1, 3600)][int]$MonitorSeconds = 90,
+        [ValidateRange(100, 60000)][int]$SampleMilliseconds = 500,
+        [ValidateRange(1, 2147483647)][int]$HandleWarningThreshold = 12000,
+        [ValidateRange(1, 2147483647)][int]$PrivateMemoryWarningMB = 2048,
+        [ValidateRange(1, 100)][int]$ConsecutiveWarningSamples = 3,
+        [string]$LocalAppData = $env:LOCALAPPDATA
+    )
+
+    $spec = Get-BrowserProcessSpec -Browser $Browser -LocalAppData $LocalAppData
+    $selectedProcessId = $ProcessId
+    $waitStarted = Get-Date
+    if ($selectedProcessId -eq 0) {
+        $waitDeadline = $waitStarted.AddSeconds($WaitForStartSeconds)
+        do {
+            $candidate = Find-BrowserMainProcess -Spec $spec
+            if ($null -ne $candidate) {
+                $selectedProcessId = [int]$candidate.ProcessId
+                break
+            }
+            if ((Get-Date) -ge $waitDeadline) {
+                break
+            }
+            Start-Sleep -Milliseconds ([math]::Min($SampleMilliseconds, 1000))
+        } while ($true)
+    }
+
+    if ($selectedProcessId -eq 0 -or $null -eq (Get-Process -Id $selectedProcessId -ErrorAction SilentlyContinue)) {
+        return [pscustomobject]@{
+            Browser = $spec.Name
+            ProcessId = if ($selectedProcessId -eq 0) { $null } else { $selectedProcessId }
+            Healthy = $false
+            Status = 'NotFound'
+            StartedAt = $waitStarted
+            MonitoredSeconds = 0
+            SampleCount = 0
+            PeakHandleCount = 0
+            PeakPrivateMemoryMB = 0
+            FinalHandleCount = 0
+            FinalPrivateMemoryMB = 0
+            Guidance = 'Start the selected browser, or pass its main process ID explicitly.'
+            Samples = @()
+        }
+    }
+
+    $samples = New-Object 'System.Collections.Generic.List[object]'
+    $monitorStarted = Get-Date
+    $monitorDeadline = $monitorStarted.AddSeconds($MonitorSeconds)
+    $status = 'Healthy'
+    $consecutiveWarnings = 0
+    $explicitProcess = $ProcessId -ne 0
+
+    do {
+        $process = Get-Process -Id $selectedProcessId -ErrorAction SilentlyContinue
+        if ($null -eq $process) {
+            $status = 'ProcessExited'
+            break
+        }
+        $relatedProcessName = if ($explicitProcess) { $process.ProcessName } else { $spec.ProcessName }
+        $relatedProcesses = @(Get-Process -Name $relatedProcessName -ErrorAction SilentlyContinue)
+        $sample = [pscustomobject]@{
+            Timestamp = Get-Date
+            HandleCount = [int]$process.HandleCount
+            PrivateMemoryMB = [math]::Round($process.PrivateMemorySize64 / 1MB, 1)
+            WorkingSetMB = [math]::Round($process.WorkingSet64 / 1MB, 1)
+            BrowserProcessCount = $relatedProcesses.Count
+            TotalBrowserHandles = [int64](($relatedProcesses | Measure-Object -Property HandleCount -Sum).Sum)
+        }
+        $samples.Add($sample)
+
+        if ($sample.HandleCount -ge $HandleWarningThreshold -or
+            $sample.PrivateMemoryMB -ge $PrivateMemoryWarningMB) {
+            $consecutiveWarnings++
+        } else {
+            $consecutiveWarnings = 0
+        }
+        if ($consecutiveWarnings -ge $ConsecutiveWarningSamples) {
+            $status = 'ResourceStorm'
+            break
+        }
+        if ((Get-Date) -ge $monitorDeadline) {
+            break
+        }
+        Start-Sleep -Milliseconds $SampleMilliseconds
+    } while ($true)
+
+    $sampleArray = @($samples.ToArray())
+    $lastSample = $sampleArray | Select-Object -Last 1
+    $peakHandles = if ($sampleArray.Count -gt 0) {
+        [int](($sampleArray | Measure-Object -Property HandleCount -Maximum).Maximum)
+    } else { 0 }
+    $peakPrivateMemory = if ($sampleArray.Count -gt 0) {
+        [double](($sampleArray | Measure-Object -Property PrivateMemoryMB -Maximum).Maximum)
+    } else { 0 }
+    $guidance = switch ($status) {
+        'Healthy' { 'No sustained main-process handle or private-memory storm crossed the configured thresholds.' }
+        'ResourceStorm' { 'Do not assume a moved cache is corrupt. Capture main-process handle names; repeated paths under Extensions\<id> point to extension amplification. Disable the suspect extension and repeat this test before using Repair.' }
+        'ProcessExited' { 'The monitored main process exited before the observation window completed. Preserve crash dumps and repeat with extension risk and handle-source checks.' }
+    }
+
+    return [pscustomobject]@{
+        Browser = $spec.Name
+        ProcessId = $selectedProcessId
+        Healthy = $status -eq 'Healthy'
+        Status = $status
+        StartedAt = $monitorStarted
+        MonitoredSeconds = [math]::Round(((Get-Date) - $monitorStarted).TotalSeconds, 1)
+        SampleCount = $sampleArray.Count
+        PeakHandleCount = $peakHandles
+        PeakPrivateMemoryMB = $peakPrivateMemory
+        FinalHandleCount = if ($null -ne $lastSample) { $lastSample.HandleCount } else { 0 }
+        FinalPrivateMemoryMB = if ($null -ne $lastSample) { $lastSample.PrivateMemoryMB } else { 0 }
+        Guidance = $guidance
+        Samples = $sampleArray
+    }
+}
+
 function Find-LargeFile {
     [CmdletBinding()]
     param(
@@ -735,4 +1110,4 @@ function Find-LargeFile {
     return @($matches | Sort-Object GB -Descending | Select-Object -First $Top)
 }
 
-Export-ModuleMember -Function Get-CacheCatalog,Get-CacheAudit,Get-DestinationStorageProfile,Invoke-CacheMigration,Test-CacheMigration,Restore-CacheMigration,Find-LargeFile
+Export-ModuleMember -Function Get-CacheCatalog,Get-CacheAudit,Get-DestinationStorageProfile,Invoke-CacheMigration,Test-CacheMigration,Restore-CacheMigration,Get-ChromiumExtensionRiskReport,Test-BrowserStartupHealth,Find-LargeFile

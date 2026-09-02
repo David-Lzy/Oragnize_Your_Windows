@@ -9,7 +9,7 @@
 | 子项目 | 适用场景 | 默认行为 | 写操作与恢复 |
 | --- | --- | --- | --- |
 | [Folder Organizer](./folder-organizer/) | 下载目录杂乱、重复文件、旧安装包、文档分类和本地检索 | 生成只读计划 | `apply --confirm APPLY` 才移动文件；写入 rollback 清单，可 `undo` |
-| [Windows Cache Mover](./windows-cache-mover/) | Chrome（含 Beta）、Brave、Edge 与开发工具缓存持续占用 C 盘 | 审计或预览；浏览器运行时缓存默认排除 | `-Apply` 后复制/建立 Junction；高风险浏览器缓存另需显式选择和 SSD 校验；JSON 清单支持恢复 |
+| [Windows Cache Mover](./windows-cache-mover/) | Chrome（含 Beta）、Brave、Edge 与开发工具缓存持续占用 C 盘；浏览器会话恢复资源风暴排查 | 缓存审计/预览与扩展风险、启动健康检查均只读；浏览器运行时缓存默认排除 | `-Apply` 后复制/建立 Junction；高风险浏览器缓存另需显式选择和 SSD 校验；JSON 清单支持恢复 |
 | [Codex Mover](./codex-mover/) | Windows 整体搬走 `.codex`/缓存；或 Linux 在两个 `CODEX_HOME` 间迁移单个 task | Windows 只读盘点与预复制；Linux 只读迁移计划 | Windows 用 UAC/Junction；Linux 备份并复制 rollout、SQLite row 和索引，源端保留 |
 
 ### 应该选择哪个？
@@ -65,6 +65,9 @@ Push-Location .\windows-cache-mover
 
 # 不带 -Apply 时仍然只是预览。
 .\scripts\Move-Cache.ps1 -DestinationRoot 'F:\'
+
+# 只读扫描可能在大规模会话恢复时放大事件的扩展代码。
+.\scripts\Get-ChromiumExtensionRiskReport.ps1 -Browser Chrome
 Pop-Location
 ```
 
