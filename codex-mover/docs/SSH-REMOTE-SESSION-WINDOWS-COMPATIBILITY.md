@@ -20,6 +20,14 @@ no rollout found for thread id <task UUID>
 1. 初次迁移把 SQLite `rollout_path` 写成了软链接解析后的磁盘真实路径；`thread/read` 可以读取，Desktop 的 `thread/resume` 却可能按目标 `CODEX_HOME/sessions` 做归属校验。第二台全新 Windows 也复现，证明这一阶段是服务端兼容问题。
 2. 远端改成目标 `$CODEX_HOME/sessions/...` 逻辑路径并重启对应 app-server 后，原 Windows 的持久 assignment 仍可能把点击请求发给旧 Host。仅重启客户端不会重建这份路由；在客户端仍运行时改 JSON，也会被 Electron 内存中的旧值写回。
 
+后续实测还发现第三种独立故障：
+
+```text
+Invalid request: AbsolutePathBuf deserialized without a base path
+```
+
+这种报错发生在 `thread/resume` 参数反序列化阶段。任务可以被目标 Host 发现、置顶并显示标题，但 Windows 状态中可能完全没有它的 assignment、workspace、sidebar 和 writable roots。Desktop 随后用空值或非绝对 fallback 组装 `runtimeWorkspaceRoots`，app-server 会在读取 rollout 之前直接拒绝请求。此时重启也不会自动合成缺失路由。
+
 这里使用的 [Windows 路由修复脚本](../scripts/Repair-CodexRemoteThreadRoute.ps1) 默认只预览，显式传入 `-Apply` 才会写入，并在写入前拒绝所有仍在运行的 Codex Desktop 进程。
 
 ## 适用范围与稳定性边界
@@ -66,6 +74,7 @@ Windows task card
 
 - 目标 SQLite 使用物理 realpath：列表/`thread/read` 成功，但 `thread/resume` 认为 rollout 不属于目标 `CODEX_HOME`。
 - 全局任务列表从目标 app-server 发现任务，但本地 `thread-project-assignments` 仍指向旧 Host；点击时旧 app-server 返回 `no rollout found`。
+- 任务只存在于 pinned/global discovery 列表，本地四组路由字段全部缺失；`thread/resume.runtimeWorkspaceRoots` 不是绝对路径，返回 `AbsolutePathBuf deserialized without a base path`。
 
 这也解释了为什么“任务看得见”不能证明“任务能继续”。
 
@@ -121,6 +130,7 @@ Get-Process -Name ChatGPT -ErrorAction SilentlyContinue |
     -ThreadId '<task UUID>' `
     -TargetHost '<目标 SSH alias>' `
     -TargetRemotePath '/srv/projects/personal' `
+    -TargetCwd '/srv/projects/personal/site' `
     -StatePath 'E:\CodexData\home\.codex-global-state.json'
 
 # 确认预览中的目标 host/project/path 后才写入。
@@ -128,17 +138,22 @@ Get-Process -Name ChatGPT -ErrorAction SilentlyContinue |
     -ThreadId '<task UUID>' `
     -TargetHost '<目标 SSH alias>' `
     -TargetRemotePath '/srv/projects/personal' `
+    -TargetCwd '/srv/projects/personal/site' `
     -StatePath 'E:\CodexData\home\.codex-global-state.json' `
     -Apply
 ```
 
-脚本会根据 host + remote path 查找已有 `remote-projects` 记录，然后一致更新：
+`-TargetRemotePath` 是 Desktop 已保存的 remote project 根目录；`-TargetCwd` 是该任务实际继续工作的目录，可以是项目根本身或其子目录。省略 `-TargetCwd` 时，两者相同。脚本拒绝相对路径、`.`/`..` 段以及项目根以外的 cwd，避免再次构造无 base path 的请求。
+
+脚本会根据 host + remote project path 查找已有 `remote-projects` 记录，然后创建或一致更新：
 
 - `thread-project-assignments[task UUID]`
 - `electron-persisted-atom-state["thread-workspace-state-v1:<task UUID>"]`
 - `sidebar-project-thread-orders`
-- 已存在的 `thread-writable-roots[task UUID]`
+- `thread-writable-roots[task UUID]`
 - `projectless-thread-ids`
+
+即使任务仅存在于 pinned/global discovery 中、上述 task-specific 字段从未生成，脚本也会补齐 workspace，并把 `projectSources`、`runtimeWorkspaceRoots` 和 writable roots 写成仅含绝对 project path 的数组。不要把 `thread-writable-roots` 手工写成单个字符串，也不要把 nested cwd 误当成 remote project ID 的查找路径。
 
 如果相同 host/path 有多个 project，脚本会停止并列出 ID；人工确认后用 `-TargetProjectId` 消除歧义。
 
@@ -149,6 +164,7 @@ Get-Process -Name ChatGPT -ErrorAction SilentlyContinue |
 ```
 
 随后使用临时文件原子替换主状态和 `.bak`，再重新解析并验证目标 assignment、workspace 与 sidebar。
+验证还要求 applied workspace 和 writable roots 存在、数组非空且全部使用绝对路径。
 
 ### 5. 启动并做端到端验收
 
@@ -174,6 +190,8 @@ Get-Process -Name ChatGPT -ErrorAction SilentlyContinue |
 | 换一台全新 Windows 电脑也失败 | 优先怀疑服务端；本次是 `rollout_path` 使用磁盘 realpath，未使用目标 `$CODEX_HOME/sessions` 逻辑路径 | 对比同一目标账户的原生 task，修正逻辑路径并重启对应 app-server |
 | 历史可见，继续对话走错 Key/API | 只复制了源 `model_provider` | 把目标 `threads.model_provider` 改成目标配置中的精确 provider 名称 |
 | `thread/read` 成功但 `thread/resume` 失败 | 最常见是 `rollout_path` 不属于目标 `$CODEX_HOME/sessions`；也可能是 `cwd`、provider 或 app-server 环境不一致 | 先把导入路径改成目标逻辑 Session 路径，再核对进程 `CODEX_HOME`、provider 与 `cwd` |
+| `AbsolutePathBuf deserialized without a base path` | 任务可被发现或置顶，但 Windows assignment/workspace/writable roots 缺失；Desktop 组装了空或非绝对 `runtimeWorkspaceRoots` | 用路由脚本同时给出 project 根和实际 cwd，确认 dry run 显示 `WorkspaceStateCreated = True`，完全退出所有 Desktop 后再 `-Apply` |
+| 项目根能打开，但任务应在更深的目录继续 | 旧脚本把 remote project path 与 task cwd 当成同一个值 | `-TargetRemotePath` 传已保存的 project 根，`-TargetCwd` 传其绝对子目录 |
 | SQLite 显示缺行或回滚 | 在 app-server 写入期间直接复制主数据库，漏了 WAL | 停止写入并使用 SQLite backup API |
 | 归档时报 `Cross-device link` | `sessions` 与 `archived_sessions` 位于不同文件系统 | 把二者放到同一物理文件系统 |
 | 大任务处理时内存暴涨 | 一次性读取数 GB JSONL | 逐行解析/复制，临时文件完成后再原子替换 |
@@ -233,6 +251,34 @@ done
 ```
 
 这些命令只读取环境和 SQLite，不打印 `auth.json`，也不应把 API key、内部 endpoint 或真实 task UUID提交到问题报告。
+
+Windows 侧还可以先做只读核对：
+
+```powershell
+$threadId = '<task UUID>'
+$stateHome = if ($env:CODEX_HOME) {
+    $env:CODEX_HOME
+}
+else {
+    Join-Path $env:USERPROFILE '.codex'
+}
+$statePath = Join-Path $stateHome '.codex-global-state.json'
+$state = Get-Content -LiteralPath $statePath -Raw |
+    ConvertFrom-Json
+
+[pscustomobject]@{
+    Assignment = $state.'thread-project-assignments'.$threadId
+    Workspace = $state.'electron-persisted-atom-state'."thread-workspace-state-v1:$threadId"
+    WritableRoots = $state.'thread-writable-roots'.$threadId
+    SidebarProjects = @(
+        $state.'sidebar-project-thread-orders'.PSObject.Properties |
+            Where-Object { @($_.Value.threadIds) -contains $threadId } |
+            ForEach-Object Name
+    )
+}
+```
+
+四项同时为空、但任务仍在 pinned/global 列表中，是 `AbsolutePathBuf` 这一类客户端路由缺失的强信号；它不等于远端 rollout 损坏。
 
 ## 恢复
 

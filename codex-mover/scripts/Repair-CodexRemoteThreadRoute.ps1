@@ -11,11 +11,19 @@ migrated to another SSH-backed CODEX_HOME.
 The default mode is read-only. Pass -Apply only after every Codex Desktop
 window in every Windows session has been closed.
 
+.PARAMETER TargetRemotePath
+The absolute POSIX path of the remote project already saved by Codex Desktop.
+
+.PARAMETER TargetCwd
+The task's absolute POSIX working directory. It may equal TargetRemotePath or
+be one of its descendants. When omitted, TargetRemotePath is used.
+
 .EXAMPLE
 .\Repair-CodexRemoteThreadRoute.ps1 `
     -ThreadId '<task UUID>' `
     -TargetHost 'personal-account' `
-    -TargetRemotePath '/srv/projects/personal'
+    -TargetRemotePath '/srv/projects/personal' `
+    -TargetCwd '/srv/projects/personal/site'
 
 .EXAMPLE
 .\Repair-CodexRemoteThreadRoute.ps1 `
@@ -38,6 +46,9 @@ param(
     [Parameter(Mandatory)]
     [ValidatePattern('^/')]
     [string]$TargetRemotePath,
+
+    [ValidatePattern('^/')]
+    [string]$TargetCwd,
 
     [ValidatePattern('^[0-9a-fA-F-]+$')]
     [string]$TargetProjectId,
@@ -87,6 +98,37 @@ function Get-CodexNormalizedRemotePath {
     return $Path.TrimEnd('/')
 }
 
+function Assert-CodexAbsoluteRemotePath {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    if (-not $Path.StartsWith('/', [StringComparison]::Ordinal)) {
+        throw "$Name must be an absolute POSIX path: $Path"
+    }
+    foreach ($segment in $Path.Split('/')) {
+        if ($segment -in @('.', '..')) {
+            throw "$Name must not contain '.' or '..' path segments: $Path"
+        }
+    }
+}
+
+function Test-CodexRemotePathWithinProject {
+    param(
+        [Parameter(Mandatory)][string]$ProjectPath,
+        [Parameter(Mandatory)][string]$Path
+    )
+
+    if ($ProjectPath -eq '/') {
+        return $true
+    }
+    return (
+        $Path -eq $ProjectPath -or
+        $Path.StartsWith(($ProjectPath + '/'), [StringComparison]::Ordinal)
+    )
+}
+
 function Get-CodexDesktopProcesses {
     return @(Get-Process -Name 'ChatGPT' -ErrorAction SilentlyContinue)
 }
@@ -134,7 +176,8 @@ function Assert-CodexPatchedRoute {
         [Parameter(Mandatory)]$State,
         [Parameter(Mandatory)][string]$ExpectedProjectId,
         [Parameter(Mandatory)][string]$ExpectedHostId,
-        [Parameter(Mandatory)][string]$ExpectedRemotePath
+        [Parameter(Mandatory)][string]$ExpectedProjectPath,
+        [Parameter(Mandatory)][string]$ExpectedCwd
     )
 
     $assignments = Get-CodexPropertyValue -InputObject $State -Name 'thread-project-assignments'
@@ -144,18 +187,34 @@ function Assert-CodexPatchedRoute {
     }
     if ($assignment.projectId -ne $ExpectedProjectId -or
         $assignment.hostId -ne $ExpectedHostId -or
-        (Get-CodexNormalizedRemotePath -Path ([string]$assignment.cwd)) -ne $ExpectedRemotePath) {
+        (Get-CodexNormalizedRemotePath -Path ([string]$assignment.path)) -ne $ExpectedProjectPath -or
+        (Get-CodexNormalizedRemotePath -Path ([string]$assignment.cwd)) -ne $ExpectedCwd) {
         throw 'The target task assignment failed post-write validation.'
     }
 
     $atoms = Get-CodexPropertyValue -InputObject $State -Name 'electron-persisted-atom-state'
     $workspace = Get-CodexPropertyValue -InputObject $atoms -Name "thread-workspace-state-v1:$ThreadId"
-    if ($null -ne $workspace) {
-        if ($workspace.project.projectId -ne $ExpectedProjectId -or
-            $workspace.project.hostId -ne $ExpectedHostId -or
-            (Get-CodexNormalizedRemotePath -Path ([string]$workspace.project.path)) -ne $ExpectedRemotePath) {
-            throw 'The target task workspace state failed post-write validation.'
-        }
+    if ($null -eq $workspace) {
+        throw 'The target task workspace state is missing after serialization.'
+    }
+    if ($workspace.project.projectId -ne $ExpectedProjectId -or
+        $workspace.project.hostId -ne $ExpectedHostId -or
+        (Get-CodexNormalizedRemotePath -Path ([string]$workspace.project.path)) -ne $ExpectedProjectPath) {
+        throw 'The target task workspace project failed post-write validation.'
+    }
+
+    $applied = Get-CodexPropertyValue -InputObject $workspace -Name 'applied'
+    if ($null -eq $applied) {
+        throw 'The target task applied workspace state is missing after serialization.'
+    }
+    $projectSources = @($applied.projectSources)
+    $runtimeWorkspaceRoots = @($applied.runtimeWorkspaceRoots)
+    if ($projectSources.Count -ne 1 -or
+        (Get-CodexNormalizedRemotePath -Path ([string]$projectSources[0])) -ne $ExpectedProjectPath -or
+        (Get-CodexNormalizedRemotePath -Path ([string]$applied.cwd)) -ne $ExpectedCwd -or
+        $runtimeWorkspaceRoots.Count -ne 1 -or
+        (Get-CodexNormalizedRemotePath -Path ([string]$runtimeWorkspaceRoots[0])) -ne $ExpectedProjectPath) {
+        throw 'The target task applied workspace paths failed post-write validation.'
     }
 
     $sidebar = Get-CodexPropertyValue -InputObject $State -Name 'sidebar-project-thread-orders'
@@ -167,6 +226,13 @@ function Assert-CodexPatchedRoute {
         if ($property.Name -ne $ExpectedProjectId -and @($property.Value.threadIds) -contains $ThreadId) {
             throw "The target task remains in another sidebar project: $($property.Name)"
         }
+    }
+
+    $writableRoots = Get-CodexPropertyValue -InputObject $State -Name 'thread-writable-roots'
+    $taskWritableRoots = @(Get-CodexPropertyValue -InputObject $writableRoots -Name $ThreadId)
+    if ($taskWritableRoots.Count -ne 1 -or
+        (Get-CodexNormalizedRemotePath -Path ([string]$taskWritableRoots[0])) -ne $ExpectedProjectPath) {
+        throw 'The target task writable roots failed post-write validation.'
     }
 }
 
@@ -189,6 +255,17 @@ else {
     "remote-ssh-discovered:$TargetHost"
 }
 $targetPath = Get-CodexNormalizedRemotePath -Path $TargetRemotePath
+$targetCwd = if ($TargetCwd) {
+    Get-CodexNormalizedRemotePath -Path $TargetCwd
+}
+else {
+    $targetPath
+}
+Assert-CodexAbsoluteRemotePath -Path $targetPath -Name 'TargetRemotePath'
+Assert-CodexAbsoluteRemotePath -Path $targetCwd -Name 'TargetCwd'
+if (-not (Test-CodexRemotePathWithinProject -ProjectPath $targetPath -Path $targetCwd)) {
+    throw "TargetCwd must be the target project path or one of its descendants. Project='$targetPath'; Cwd='$targetCwd'"
+}
 
 $originalText = [IO.File]::ReadAllText($StatePath, $utf8NoBom)
 $state = $originalText | ConvertFrom-Json
@@ -210,12 +287,14 @@ $targetProject = $projectMatches[0]
 
 $assignments = Get-CodexPropertyValue -InputObject $state -Name 'thread-project-assignments'
 if ($null -eq $assignments) {
-    throw 'thread-project-assignments is missing from the Desktop state file.'
+    $assignments = [pscustomobject][ordered]@{}
+    Set-CodexPropertyValue -InputObject $state -Name 'thread-project-assignments' -Value $assignments
 }
 $currentAssignment = Get-CodexPropertyValue -InputObject $assignments -Name $ThreadId
 $currentProjectId = if ($null -ne $currentAssignment) { [string]$currentAssignment.projectId } else { $null }
 $currentHostId = if ($null -ne $currentAssignment) { [string]$currentAssignment.hostId } else { $null }
-$currentPath = if ($null -ne $currentAssignment) { [string]$currentAssignment.cwd } else { $null }
+$currentProjectPath = if ($null -ne $currentAssignment) { [string]$currentAssignment.path } else { $null }
+$currentCwd = if ($null -ne $currentAssignment) { [string]$currentAssignment.cwd } else { $null }
 
 $pendingCoreUpdate = $false
 if ($null -ne $currentAssignment -and
@@ -226,40 +305,44 @@ $newAssignment = [ordered]@{
     projectKind = 'remote'
     projectId = [string]$targetProject.id
     path = $targetPath
-    cwd = $targetPath
+    cwd = $targetCwd
     hostId = $targetHostId
     pendingCoreUpdate = $pendingCoreUpdate
 }
 Set-CodexPropertyValue -InputObject $assignments -Name $ThreadId -Value ([pscustomobject]$newAssignment)
 
-$workspaceUpdated = $false
 $atoms = Get-CodexPropertyValue -InputObject $state -Name 'electron-persisted-atom-state'
-if ($null -ne $atoms) {
-    $workspaceKey = "thread-workspace-state-v1:$ThreadId"
-    $workspace = Get-CodexPropertyValue -InputObject $atoms -Name $workspaceKey
-    if ($null -ne $workspace) {
-        $workspaceProject = [pscustomobject][ordered]@{
-            projectKind = 'remote'
-            projectId = [string]$targetProject.id
-            path = $targetPath
-            hostId = $targetHostId
-        }
-        Set-CodexPropertyValue -InputObject $workspace -Name 'project' -Value $workspaceProject
-        Set-CodexPropertyValue -InputObject $workspace -Name 'revision' -Value ([guid]::NewGuid().ToString())
-
-        $applied = Get-CodexPropertyValue -InputObject $workspace -Name 'applied'
-        if ($null -ne $applied) {
-            Set-CodexPropertyValue -InputObject $applied -Name 'projectSources' -Value @($targetPath)
-            Set-CodexPropertyValue -InputObject $applied -Name 'cwd' -Value $targetPath
-            Set-CodexPropertyValue -InputObject $applied -Name 'runtimeWorkspaceRoots' -Value @($targetPath)
-        }
-        $workspaceUpdated = $true
-    }
+if ($null -eq $atoms) {
+    $atoms = [pscustomobject][ordered]@{}
+    Set-CodexPropertyValue -InputObject $state -Name 'electron-persisted-atom-state' -Value $atoms
 }
+$workspaceKey = "thread-workspace-state-v1:$ThreadId"
+$workspace = Get-CodexPropertyValue -InputObject $atoms -Name $workspaceKey
+$workspaceCreated = $null -eq $workspace
+if ($workspaceCreated) {
+    $workspace = [pscustomobject][ordered]@{}
+    Set-CodexPropertyValue -InputObject $atoms -Name $workspaceKey -Value $workspace
+}
+$workspaceProject = [pscustomobject][ordered]@{
+    projectKind = 'remote'
+    projectId = [string]$targetProject.id
+    path = $targetPath
+    hostId = $targetHostId
+}
+$appliedWorkspace = [pscustomobject][ordered]@{
+    projectSources = [object[]]@($targetPath)
+    cwd = $targetCwd
+    runtimeWorkspaceRoots = [object[]]@($targetPath)
+}
+Set-CodexPropertyValue -InputObject $workspace -Name 'project' -Value $workspaceProject
+Set-CodexPropertyValue -InputObject $workspace -Name 'revision' -Value ([guid]::NewGuid().ToString())
+Set-CodexPropertyValue -InputObject $workspace -Name 'applied' -Value $appliedWorkspace
+Set-CodexPropertyValue -InputObject $workspace -Name 'pending' -Value $null
 
 $sidebar = Get-CodexPropertyValue -InputObject $state -Name 'sidebar-project-thread-orders'
 if ($null -eq $sidebar) {
-    throw 'sidebar-project-thread-orders is missing from the Desktop state file.'
+    $sidebar = [pscustomobject][ordered]@{}
+    Set-CodexPropertyValue -InputObject $state -Name 'sidebar-project-thread-orders' -Value $sidebar
 }
 foreach ($property in $sidebar.PSObject.Properties) {
     $property.Value.threadIds = @($property.Value.threadIds | Where-Object { $_ -ne $ThreadId })
@@ -279,25 +362,37 @@ if ($null -ne $projectless) {
 }
 
 $writableRoots = Get-CodexPropertyValue -InputObject $state -Name 'thread-writable-roots'
-if ($null -ne $writableRoots -and
-    $null -ne $writableRoots.PSObject.Properties[$ThreadId]) {
-    Set-CodexPropertyValue -InputObject $writableRoots -Name $ThreadId -Value $targetPath
+if ($null -eq $writableRoots) {
+    $writableRoots = [pscustomobject][ordered]@{}
+    Set-CodexPropertyValue -InputObject $state -Name 'thread-writable-roots' -Value $writableRoots
 }
+Set-CodexPropertyValue `
+    -InputObject $writableRoots `
+    -Name $ThreadId `
+    -Value ([object[]]@($targetPath))
 
 Assert-CodexPatchedRoute `
     -State $state `
     -ExpectedProjectId ([string]$targetProject.id) `
     -ExpectedHostId $targetHostId `
-    -ExpectedRemotePath $targetPath
+    -ExpectedProjectPath $targetPath `
+    -ExpectedCwd $targetCwd
 
-$pathChanged = $true
-if ($currentPath) {
-    $pathChanged = (Get-CodexNormalizedRemotePath -Path $currentPath) -ne $targetPath
+$projectPathChanged = $true
+if ($currentProjectPath) {
+    $projectPathChanged = (
+        Get-CodexNormalizedRemotePath -Path $currentProjectPath
+    ) -ne $targetPath
+}
+$cwdChanged = $true
+if ($currentCwd) {
+    $cwdChanged = (Get-CodexNormalizedRemotePath -Path $currentCwd) -ne $targetCwd
 }
 $changed = (
     $currentProjectId -ne [string]$targetProject.id -or
     $currentHostId -ne $targetHostId -or
-    $pathChanged
+    $projectPathChanged -or
+    $cwdChanged
 )
 
 $summary = [pscustomobject]@{
@@ -305,11 +400,15 @@ $summary = [pscustomobject]@{
     StatePath = $StatePath
     CurrentProjectId = $currentProjectId
     CurrentHostId = $currentHostId
-    CurrentCwd = $currentPath
+    CurrentProjectPath = $currentProjectPath
+    CurrentCwd = $currentCwd
     TargetProjectId = [string]$targetProject.id
     TargetHostId = $targetHostId
-    TargetCwd = $targetPath
-    WorkspaceStateUpdated = $workspaceUpdated
+    TargetProjectPath = $targetPath
+    TargetCwd = $targetCwd
+    WorkspaceStateCreated = $workspaceCreated
+    WorkspaceStateUpdated = $true
+    WritableRootsUpdated = $true
     AssignmentChanged = $changed
     ApplyRequested = [bool]$Apply
 }
@@ -352,7 +451,8 @@ Assert-CodexPatchedRoute `
     -State $persistedState `
     -ExpectedProjectId ([string]$targetProject.id) `
     -ExpectedHostId $targetHostId `
-    -ExpectedRemotePath $targetPath
+    -ExpectedProjectPath $targetPath `
+    -ExpectedCwd $targetCwd
 
 $hash = (Get-FileHash -LiteralPath $StatePath -Algorithm SHA256).Hash
 Write-Host "UPDATED: task '$ThreadId' now routes to '$targetHostId'." -ForegroundColor Green

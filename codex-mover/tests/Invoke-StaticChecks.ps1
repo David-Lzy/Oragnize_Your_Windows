@@ -91,6 +91,8 @@ $routeRequirements = [ordered]@{
     'saved remote project lookup' = '\bremote-projects\b'
     'task assignment update' = '\bthread-project-assignments\b'
     'workspace state update' = 'thread-workspace-state-v1'
+    'nested task cwd support' = '\$TargetCwd\b'
+    'absolute runtime workspace roots' = '\bruntimeWorkspaceRoots\b'
     'sidebar order update' = '\bsidebar-project-thread-orders\b'
     'writable root update' = '\bthread-writable-roots\b'
     'Desktop process guard' = "Get-Process\s+-Name\s+'ChatGPT'"
@@ -106,12 +108,15 @@ foreach ($requirement in $routeRequirements.GetEnumerator()) {
 $routeTestRoot = Join-Path ([IO.Path]::GetTempPath()) ('codex-route-test-' + [guid]::NewGuid().ToString('N'))
 $routeStatePath = Join-Path $routeTestRoot '.codex-global-state.json'
 $routeThreadId = [guid]::NewGuid().ToString()
+$routeMissingThreadId = [guid]::NewGuid().ToString()
 $routeSourceProjectId = [guid]::NewGuid().ToString()
 $routeTargetProjectId = [guid]::NewGuid().ToString()
 $routeSourceHost = 'remote-ssh-discovered:source-account'
 $routeTargetHost = 'remote-ssh-discovered:target-account'
 $routeSourcePath = '/srv/projects/source'
 $routeTargetPath = '/srv/projects/target'
+$routeTargetCwd = "$routeTargetPath/site"
+$routeMissingCwd = "$routeTargetPath/recovered-site"
 
 $routeAssignments = [ordered]@{}
 $routeAssignments[$routeThreadId] = [ordered]@{
@@ -142,7 +147,7 @@ $routeSidebar = [ordered]@{}
 $routeSidebar[$routeSourceProjectId] = [ordered]@{ threadIds = @($routeThreadId) }
 $routeSidebar[$routeTargetProjectId] = [ordered]@{ threadIds = @() }
 $routeWritableRoots = [ordered]@{}
-$routeWritableRoots[$routeThreadId] = $routeSourcePath
+$routeWritableRoots[$routeThreadId] = [object[]]@($routeSourcePath)
 $routeState = [ordered]@{
     'remote-projects' = @(
         [ordered]@{
@@ -163,6 +168,7 @@ $routeState = [ordered]@{
     'sidebar-project-thread-orders' = $routeSidebar
     'projectless-thread-ids' = @($routeThreadId)
     'thread-writable-roots' = $routeWritableRoots
+    'pinned-thread-ids' = @($routeMissingThreadId)
 }
 
 New-Item -ItemType Directory -Path $routeTestRoot -Force | Out-Null
@@ -177,10 +183,32 @@ try {
         -ThreadId $routeThreadId `
         -TargetHost 'target-account' `
         -TargetRemotePath $routeTargetPath `
+        -TargetCwd $routeTargetCwd `
         -StatePath $routeStatePath 6>&1 | Out-String
     $routeHashAfter = (Get-FileHash -LiteralPath $routeStatePath -Algorithm SHA256).Hash
     if ($routeHashBefore -ne $routeHashAfter -or $routeDryRunOutput -notmatch 'DRY RUN') {
         throw 'Remote task route dry-run changed its input or omitted the dry-run result.'
+    }
+
+    foreach ($invalidTargetCwd in @(
+        '/srv/projects/target-other',
+        "$routeTargetPath/../escape"
+    )) {
+        $validationError = $null
+        try {
+            & $routeScriptPath `
+                -ThreadId $routeThreadId `
+                -TargetHost 'target-account' `
+                -TargetRemotePath $routeTargetPath `
+                -TargetCwd $invalidTargetCwd `
+                -StatePath $routeStatePath 6>&1 | Out-Null
+        }
+        catch {
+            $validationError = $_.Exception.Message
+        }
+        if (-not $validationError) {
+            throw "Remote task route accepted invalid TargetCwd: $invalidTargetCwd"
+        }
     }
 
     & {
@@ -188,6 +216,7 @@ try {
             [string]$ScriptPath,
             [string]$TaskId,
             [string]$RemotePath,
+            [string]$TaskCwd,
             [string]$DesktopStatePath
         )
 
@@ -203,28 +232,96 @@ try {
             -ThreadId $TaskId `
             -TargetHost 'target-account' `
             -TargetRemotePath $RemotePath `
+            -TargetCwd $TaskCwd `
             -StatePath $DesktopStatePath `
             -Apply | Out-Null
-    } $routeScriptPath $routeThreadId $routeTargetPath $routeStatePath
+    } $routeScriptPath $routeThreadId $routeTargetPath $routeTargetCwd $routeStatePath
 
     $routePatchedState = Get-Content -LiteralPath $routeStatePath -Raw | ConvertFrom-Json
     $routePatchedAssignment = $routePatchedState.'thread-project-assignments'.$routeThreadId
     $routePatchedWorkspace = $routePatchedState.'electron-persisted-atom-state'."thread-workspace-state-v1:$routeThreadId"
     $routeSourceOrder = @($routePatchedState.'sidebar-project-thread-orders'.$routeSourceProjectId.threadIds)
     $routeTargetOrder = @($routePatchedState.'sidebar-project-thread-orders'.$routeTargetProjectId.threadIds)
+    $routePatchedWritableRoots = @($routePatchedState.'thread-writable-roots'.$routeThreadId)
     if ($routePatchedAssignment.projectId -ne $routeTargetProjectId -or
         $routePatchedAssignment.hostId -ne $routeTargetHost -or
+        $routePatchedAssignment.path -ne $routeTargetPath -or
+        $routePatchedAssignment.cwd -ne $routeTargetCwd -or
         $routePatchedWorkspace.project.projectId -ne $routeTargetProjectId -or
+        $routePatchedWorkspace.applied.cwd -ne $routeTargetCwd -or
+        @($routePatchedWorkspace.applied.runtimeWorkspaceRoots).Count -ne 1 -or
+        $routePatchedWorkspace.applied.runtimeWorkspaceRoots[0] -ne $routeTargetPath -or
         $routeSourceOrder -contains $routeThreadId -or
         $routeTargetOrder -notcontains $routeThreadId -or
-        $routePatchedState.'thread-writable-roots'.$routeThreadId -ne $routeTargetPath) {
+        $routePatchedWritableRoots.Count -ne 1 -or
+        $routePatchedWritableRoots[0] -ne $routeTargetPath) {
         throw 'Remote task route apply test did not update every required route field.'
+    }
+
+    $missingHashBefore = (Get-FileHash -LiteralPath $routeStatePath -Algorithm SHA256).Hash
+    $missingDryRunOutput = & $routeScriptPath `
+        -ThreadId $routeMissingThreadId `
+        -TargetHost 'target-account' `
+        -TargetRemotePath $routeTargetPath `
+        -TargetCwd $routeMissingCwd `
+        -StatePath $routeStatePath 6>&1 | Out-String
+    $missingHashAfter = (Get-FileHash -LiteralPath $routeStatePath -Algorithm SHA256).Hash
+    if ($missingHashBefore -ne $missingHashAfter -or
+        $missingDryRunOutput -notmatch 'WorkspaceStateCreated\s+:\s+True') {
+        throw 'Missing-route dry-run changed its input or did not report workspace creation.'
+    }
+
+    & {
+        param(
+            [string]$ScriptPath,
+            [string]$TaskId,
+            [string]$RemotePath,
+            [string]$TaskCwd,
+            [string]$DesktopStatePath
+        )
+
+        function Get-Process {
+            param(
+                [string[]]$Name,
+                $ErrorAction
+            )
+            return @()
+        }
+
+        & $ScriptPath `
+            -ThreadId $TaskId `
+            -TargetHost 'target-account' `
+            -TargetRemotePath $RemotePath `
+            -TargetCwd $TaskCwd `
+            -StatePath $DesktopStatePath `
+            -Apply | Out-Null
+    } $routeScriptPath $routeMissingThreadId $routeTargetPath $routeMissingCwd $routeStatePath
+
+    $missingPatchedState = Get-Content -LiteralPath $routeStatePath -Raw | ConvertFrom-Json
+    $missingAssignment = $missingPatchedState.'thread-project-assignments'.$routeMissingThreadId
+    $missingWorkspace = $missingPatchedState.'electron-persisted-atom-state'."thread-workspace-state-v1:$routeMissingThreadId"
+    $missingWritableRoots = @($missingPatchedState.'thread-writable-roots'.$routeMissingThreadId)
+    $missingTargetOrder = @($missingPatchedState.'sidebar-project-thread-orders'.$routeTargetProjectId.threadIds)
+    if ($missingAssignment.projectId -ne $routeTargetProjectId -or
+        $missingAssignment.hostId -ne $routeTargetHost -or
+        $missingAssignment.path -ne $routeTargetPath -or
+        $missingAssignment.cwd -ne $routeMissingCwd -or
+        $missingWorkspace.project.path -ne $routeTargetPath -or
+        $missingWorkspace.applied.cwd -ne $routeMissingCwd -or
+        @($missingWorkspace.applied.projectSources).Count -ne 1 -or
+        $missingWorkspace.applied.projectSources[0] -ne $routeTargetPath -or
+        @($missingWorkspace.applied.runtimeWorkspaceRoots).Count -ne 1 -or
+        $missingWorkspace.applied.runtimeWorkspaceRoots[0] -ne $routeTargetPath -or
+        $missingWritableRoots.Count -ne 1 -or
+        $missingWritableRoots[0] -ne $routeTargetPath -or
+        $missingTargetOrder -notcontains $routeMissingThreadId) {
+        throw 'Missing-route apply test did not synthesize every absolute route field.'
     }
     if (-not (Test-Path -LiteralPath "$routeStatePath.bak" -PathType Leaf) -or
         @(Get-ChildItem -LiteralPath (Join-Path $routeTestRoot '.route-fix-backups') -Recurse -File).Count -lt 1) {
         throw 'Remote task route apply test did not create its recovery files.'
     }
-    Write-Host 'PASS remote task Windows route dry-run, apply, validation, and backup test'
+    Write-Host 'PASS existing and missing remote task Windows route dry-run, apply, validation, and backup tests'
 }
 finally {
     if (Test-Path -LiteralPath $routeTestRoot) {
